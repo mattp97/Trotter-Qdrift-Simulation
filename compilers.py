@@ -1,6 +1,8 @@
 import numpy as np
 from scipy import linalg
 
+FLOATING_POINT_PRECISION = 1e-10
+
 # A basic trotter simulator organizer.
 # Inputs
 # - hamiltonian_list: List of terms that compose your overall hamiltonian. Data type of each entry
@@ -13,56 +15,252 @@ from scipy import linalg
 #               overall simulation into t/r chunks.
 # - order: The trotter order, represented as "2k" in literature. 
 class TrotterSim:
-    def __init__(self, hamiltonian_list = [], time=1.0, iterations=1, order = 1):
-        self.hamiltonian_list = hamiltonian_list
-        self.time = time
-        self.iterations = iterations
+    def __init__(self, hamiltonian_list = [], order = 1):
+        self.hamiltonian_list = []
         self.spectral_norms = []
         self.hilbert_dim = hamiltonian_list[0].shape[0]
-        self.compute_spectral_norms()
+        self.order = order
 
-    # Helper function to compute spectral norm list. Used in constructor, isolated as function for
-    # potential use besides internally. If used externally returns copy so it cannot be modified
-    # externally
-    def compute_spectral_norms(self):
-        if len(self.spectral_norms) == 0:
-            ret = [np.linalg.norm(h, ord=2) for h in self.hamiltonian_list]
-            self.spectral_norms = ret 
-        return self.spectral_norms.copy()
+        # Use the first computational basis state as the initial state until the user specifies.
+        self.initial_state = np.zeros((self.hilbert_dim, 1))
+        self.initial_state[0] = 1
+        self.final_state = np.copy(self.initial_state)
 
-    # Computes and stores the total approximate unitary evolution operater e^{i H t} based on the
-    # order and parameters as given.
-    def first_order_op(self):
+        self.prep_hamiltonian_lists(hamiltonian_list)
+
+    # Helper function to compute spectral norm list. Used solely constructor
+    def prep_hamiltonian_lists(self, ham_list):
+        for h in ham_list:
+            temp_norm = np.linalg.norm(h, ord=2)
+            if temp_norm < FLOATING_POINT_PRECISION:
+                print("[prep_hamiltonian_lists] Spectral norm of a hamiltonian found to be 0")
+                self.spectral_norms = []
+                self.hamiltonian_list = []
+                return 1
+            self.spectral_norms.append(temp_norm)
+            self.hamiltonian_list.append(h / temp_norm)
+        return 0
+
+    # Do some sanity checking before storing. Check if input is proper dimensions and an actual
+    # quantum state.
+    def set_initial_state(self, psi_init):
+        global FLOATING_POINT_PRECISION
+        if type(psi_init) != type(self.initial_state):
+            print("[set_initial_state]: input type not numpy ndarray")
+            return 1
+
+        if psi_init.size != self.initial_state.size:
+            print("[set_initial_state]: input size not matching")
+            return 1
+
+        # check that the frobenius aka l2 norm is 1
+        if np.linalg.norm(psi_init, ord='fro') - 1.0 > FLOATING_POINT_PRECISION:
+            print("[set_initial_state]: input is not properly normalized")
+            return 1
+
+        # check that each dimension has magnitude between 0 and 1
+        for ix in range(len(psi_init)):
+            if np.abs(psi_init[ix]) > 1.0:
+                print("[set_initial_state]: too big of a dimension in vector")
+                return 1
+
+        # Should be good to go now
+        self.initial_state = psi_init
+        return 0
+
+    # Helper functions to generate the sequence of gates for product formulas given an input time
+    # up to the simulator function to handle iterations and such. Can probably move all of these 
+    # into one single function.
+    def first_order_op(self, op_time):
         evol_op = np.identity(self.hilbert_dim)
-        for h in self.hamiltonian_list:
-            exp_h = linalg.expm(1.0j * self.time / (1.0 * self.iterations) * h)
+        for h_term in self.hamiltonian_list:
+            exp_h = linalg.expm(1.0j * op_time  * h_term)
             evol_op = np.matmul(evol_op, exp_h)
-        return np.linalg.matrix_power(evol_op, int(self.iterations))
-    
-    def second_order_op(self):
-        evol_op = np.identity(self.hilbert_dim)
-        self.time = self.time/2.0
-        evol_op = np.matmul(evol_op, self.first_order_op())
-        self.time = self.time * -1.0
-        evol_op = np.matmul(evol_op, self.first_order_op().conj().T)
-        self.time = -2.0 * self.time
         return evol_op
+    
+    def second_order_op(self, op_time):
+        evol_op = np.identity(self.hilbert_dim)
+        # Forwards terms
+        for ix in range(len(self.hamiltonian_list)):
+            exp_h = linalg.expm(1.0j * op_time * self.hamiltonian_list[ix] / 2.0)
+            evol_op = np.matmul(evol_op, exp_h)
+        
+        # Backwards terms
+        for ix in range(len(self.hamiltonian_list)):
+            exp_h = linalg.expm(1.0j * op_time * self.hamiltonian_list[- ix - 1] / 2.0)
+            evol_op = np.matmul(evol_op, exp_h)
+        return evol_op
+
+    def higher_order_op(self, order, op_time):
+        if type(order) != type(2):
+            print("[higher_order_op] provided input order (" + str(order) + ") is not an integer")
+            return 1
+        elif order == 1:
+            return self.first_order_op(op_time)
+        elif order == 2:
+            return self.second_order_op(op_time)
+        elif order % 2 == 0:
+            time_const = 1.0/(4 - 4**(1.0/order - 1))
+            outer = np.linalg.matrix_power(self.higher_order_op(order - 2, time_const * op_time), 2)
+            inner = self.higher_order_op(order - 2, (1. - 4. * time_const) * op_time)
+            ret = np.matmul(outer, inner)
+            ret = np.matmul(ret, outer)
+            return ret
+        else:
+            print("[higher_order_op] Encountered incorrect order (" + str(order) + ") for trotter formula")
+            return 1
+    
+    def simulate(self, time, iterations):
+        if type(iterations) != type(3) and iterations < 1:
+            print("[simulate] Incorrect type for iterations, must be integer greater than 1.")
+            return 1
+        evol_op = self.higher_order_op(self.order, (1.0 * time) / (1.0* iterations))
+        evol_op = np.linalg.matrix_power(evol_op, iterations)
+        self.final_state = np.dot(evol_op, self.initial_state)
+        print('[trott_sim] evol_op:\n', evol_op)
+        return np.copy(self.final_state)
+
+class QDriftSimulator:
+    def __init__(self, hamiltonian_list = [], rng_seed = 1):
+        self.hamiltonian_list = []
+        self.spectral_norms = []
+        self.hilbert_dim = hamiltonian_list[0].shape[0]
+        self.rng_seed = rng_seed
+
+        # Use the first computational basis state as the initial state until the user specifies.
+        self.initial_state = np.zeros((self.hilbert_dim, 1))
+        self.initial_state[0] = 1.
+        self.final_state = np.copy(self.initial_state)
+
+        self.prep_hamiltonian_lists(hamiltonian_list)
+        np.random.seed(self.rng_seed)
+
+    def prep_hamiltonian_lists(self, ham_list):
+        for h in ham_list:
+            temp_norm = np.linalg.norm(h, ord=2)
+            if temp_norm < FLOATING_POINT_PRECISION:
+                print("[prep_hamiltonian_lists] Spectral norm of a hamiltonian found to be 0")
+                self.spectral_norms = []
+                self.hamiltonian_list = []
+                return 1
+            self.spectral_norms.append(temp_norm)
+            self.hamiltonian_list.append(h / temp_norm)
+        return 0
+
+    # Do some sanity checking before storing. Check if input is proper dimensions and an actual
+    # quantum state.
+    def set_initial_state(self, psi_init):
+        global FLOATING_POINT_PRECISION
+        if type(psi_init) != type(self.initial_state):
+            print("[set_initial_state]: input type not numpy ndarray")
+            return 1
+
+        if psi_init.size != self.initial_state.size:
+            print("[set_initial_state]: input size not matching")
+            return 1
+
+        # check that the frobenius aka l2 norm is 1
+        if np.linalg.norm(psi_init, ord='fro') - 1.0 > FLOATING_POINT_PRECISION:
+            print("[set_initial_state]: input is not properly normalized")
+            return 1
+
+        # check that each dimension has magnitude between 0 and 1
+        for ix in range(len(psi_init)):
+            if np.abs(psi_init[ix]) > 1.0:
+                print("[set_initial_state]: too big of a dimension in vector")
+                return 1
+
+        # Should be good to go now
+        self.initial_state = psi_init
+        return 0
+
+    # RETURNS A 0 BASED INDEX TO BE USED IN CODE!!
+    def draw_hamiltonian_sample(self):
+        sample = np.random.random()
+        tot = 0.
+        lamb = np.sum(self.spectral_norms)
+        for ix in range(len(self.spectral_norms)):
+            if sample > tot and sample < tot + self.spectral_norms[ix] / lamb:
+                return ix
+            tot += self.spectral_norms[ix] / lamb
+        return len(self.spectral_norms) - 1
+
+    def simulate(self, time, samples):
+        evol_op = np.identity(self.hilbert_dim)
+        tau = time / (samples * np.sum(self.spectral_norms))
+        for n in range(samples):
+            ix = self.draw_hamiltonian_sample()
+            exp_h = linalg.expm(1.j * tau * self.hamiltonian_list[ix])
+            evol_op = np.matmul(exp_h, evol_op)
+        print('[qd_sim] evol_op:\n', evol_op)
+        self.final_state = np.dot(evol_op, self.initial_state)
+        return np.copy(self.final_state)
 
 # Create a simple evolution operator, compare the difference with known result. Beware floating pt
 # errors
 # H = sigma_X
 def test_first_order_op():
     sigma_x = np.array([[0,1],[1,0]])
-    print(sigma_x)
-    sim = TrotterSim([sigma_x], time=np.pi/2, iterations=1)
-    sim2 = TrotterSim([sigma_x], time=np.pi/2, iterations=2)
-    print(sim.first_order_op())
-    print(sim2.first_order_op())
+    sim = TrotterSim([sigma_x], order=1)
+    print(sim.first_order_op(np.pi/2.))
 
 def test_second_order_op():
     sigma_x = np.array([[0, 1], [1, 0]])
-    sim = TrotterSim([sigma_x], time=np.pi/2, iterations=1)
-    print(sim.second_order_op())
+    sim = TrotterSim([sigma_x], order=2)
+    print(sim.second_order_op(np.pi/2.))
 
-test_first_order_op()
-test_second_order_op()
+def test_higher_order_op():
+    sigma_x = np.array([[0,1], [1,0]])
+    sim = TrotterSim([sigma_x], order=6)
+    print(sim.higher_order_op(6, np.pi/2.))
+
+def test_trotter():
+    time = np.random.random() * np.pi
+    iterations = 40
+    sigma_x = np.array([[0, 1], [0, 1]])
+    input_state = np.array([1, 0]).reshape((2,1))
+
+    sim = TrotterSim([sigma_x], order = 6)
+    sim.set_initial_state(input_state)
+
+    exact_op = linalg.expm(1j * sigma_x * time)
+    expected = np.dot(exact_op, input_state)
+    out = sim.simulate(time, iterations)
+    print("[test_simulate] final output l2 dist: ", np.linalg.norm(out - expected, ord='fro'))
+
+def test_qdrift():
+    time = 1.2345
+    bigN = 500
+    h1 = np.random.random((4,4)) + 1j * np.random.random((4,4))
+    h2 = np.random.random((4,4)) + 1j * np.random.random((4,4))
+    h3 = np.random.random((4,4)) + 1j * np.random.random((4,4))
+    h = [h1 + h1.conj().T, h2 + h2.conj().T, h3 + h3.conj().T]
+
+    print('[test_simulate] hamiltonian:\n', sum(h))
+    print('[test_simulate] hamiltonian conj transpose:\n', sum(h) - sum(h).conj().T)
+
+    input_state = np.array([1, 0, 0, 0]).reshape((4,1))
+    qdsim = QDriftSimulator(h)
+    qdsim.set_initial_state(input_state)
+
+    trott_sim = TrotterSim(h, 1)
+    trott_sim.set_initial_state(input_state)
+
+    exact_op = linalg.expm(1j * sum(h) * time)
+    expected = np.dot(exact_op, input_state)
+
+    qd_out = qdsim.simulate(time, bigN)
+    trott_out = trott_sim.simulate(time, 100)
+    print('[test_simulate] qdrift output:\n', qd_out)
+    print('[test_simulate] trotter output:\n', trott_out)
+    print('[test_simulate] Expected output:\n', expected)
+    print("[qdrift_simulate] final qd l2 dist: ", np.linalg.norm(qd_out - expected, ord='fro'))
+    print("[qdrift_simulate] final trott l2 dist: ", np.linalg.norm(trott_out - expected, ord='fro'))
+
+test = True
+if test:
+    test_first_order_op()
+    test_second_order_op()
+    test_higher_order_op()
+    test_trotter()
+    test_qdrift()
