@@ -111,13 +111,12 @@ class TrotterSim:
             return 1
     
     def simulate(self, time, iterations):
-        if type(iterations) != type(3) and iterations < 1:
+        if type(iterations) != type(3) or iterations < 1:
             print("[simulate] Incorrect type for iterations, must be integer greater than 1.")
             return 1
         evol_op = self.higher_order_op(self.order, (1.0 * time) / (1.0* iterations))
         evol_op = np.linalg.matrix_power(evol_op, iterations)
         self.final_state = np.dot(evol_op, self.initial_state)
-        print('[trott_sim] evol_op:\n', evol_op)
         return np.copy(self.final_state)
 
 class QDriftSimulator:
@@ -192,7 +191,7 @@ class QDriftSimulator:
             ix = self.draw_hamiltonian_sample()
             exp_h = linalg.expm(1.j * tau * self.hamiltonian_list[ix])
             evol_op = np.matmul(exp_h, evol_op)
-        print('[qd_sim] evol_op:\n', evol_op)
+        # print('[qd_sim] evol_op:\n', evol_op)
         self.final_state = np.dot(evol_op, self.initial_state)
         return np.copy(self.final_state)
 
@@ -202,42 +201,57 @@ class QDriftSimulator:
 def test_first_order_op():
     sigma_x = np.array([[0,1],[1,0]])
     sim = TrotterSim([sigma_x], order=1)
-    print(sim.first_order_op(np.pi/2.))
 
 def test_second_order_op():
     sigma_x = np.array([[0, 1], [1, 0]])
     sim = TrotterSim([sigma_x], order=2)
-    print(sim.second_order_op(np.pi/2.))
 
 def test_higher_order_op():
     sigma_x = np.array([[0,1], [1,0]])
     sim = TrotterSim([sigma_x], order=6)
-    print(sim.higher_order_op(6, np.pi/2.))
 
 def test_trotter():
-    time = np.random.random() * np.pi
-    iterations = 40
-    sigma_x = np.array([[0, 1], [0, 1]])
-    input_state = np.array([1, 0]).reshape((2,1))
+    time = 1
+    iterations = 1000000000
+    X = np.array([[0, 1],[1, 0]], dtype='complex')
+    Y = np.array([[0, -1j], [1j, 0]], dtype='complex')
+    Z = np.array([[1, 0], [0, -1]], dtype='complex')
+    I = np.array([[1, 0], [0, 1]], dtype='complex')
+    
+    h1 = np.kron(X, X)
+    h2 = np.kron(X, Y)
+    h3 = np.kron(X, Z)
+    h4 = np.kron(Y, Z)
+    h5 = np.kron(Y, Y)
+    h1 = np.random.random() * np.kron(X, X)
 
-    sim = TrotterSim([sigma_x], order = 6)
+    h = [h1, h2, h3, h4, h5]
+    input_state = np.array([1, 0, 0, 0], dtype='complex').reshape((4,1))
+
+    sim = TrotterSim(h, order = 2)
     sim.set_initial_state(input_state)
 
-    exact_op = linalg.expm(1j * sigma_x * time)
+    exact_op = linalg.expm(1.j * sum(h) * time)
     expected = np.dot(exact_op, input_state)
+    infidelities = []
     out = sim.simulate(time, iterations)
-    print("[test_simulate] final output l2 dist: ", np.linalg.norm(out - expected, ord='fro'))
+    infidelities.append(1. - np.abs(np.dot(expected.conj().T, out))**2)
+    # print("[test_trotter] infidelities: ", infidelities)
 
 def test_qdrift():
     time = 1.2345
     bigN = 500
-    h1 = np.random.random((4,4)) + 1j * np.random.random((4,4))
-    h2 = np.random.random((4,4)) + 1j * np.random.random((4,4))
-    h3 = np.random.random((4,4)) + 1j * np.random.random((4,4))
-    h = [h1 + h1.conj().T, h2 + h2.conj().T, h3 + h3.conj().T]
-
-    print('[test_simulate] hamiltonian:\n', sum(h))
-    print('[test_simulate] hamiltonian conj transpose:\n', sum(h) - sum(h).conj().T)
+    X = np.array([[0, 1],[1, 0]], dtype='complex')
+    Y = np.array([[0, -1j], [1j, 0]], dtype='complex')
+    Z = np.array([[1, 0], [0, -1]], dtype='complex')
+    I = np.array([[1, 0], [0, 1]], dtype='complex')
+    
+    h1 = np.kron(X, X)
+    h2 = np.kron(X, Y)
+    h3 = np.kron(X, Z)
+    h4 = np.kron(Y, Z)
+    h5 = np.kron(Y, Y)
+    h = [h1, h2, h3, h4, h5]
 
     input_state = np.array([1, 0, 0, 0]).reshape((4,1))
     qdsim = QDriftSimulator(h)
@@ -251,11 +265,6 @@ def test_qdrift():
 
     qd_out = qdsim.simulate(time, bigN)
     trott_out = trott_sim.simulate(time, 100)
-    print('[test_simulate] qdrift output:\n', qd_out)
-    print('[test_simulate] trotter output:\n', trott_out)
-    print('[test_simulate] Expected output:\n', expected)
-    print("[qdrift_simulate] final qd l2 dist: ", np.linalg.norm(qd_out - expected, ord='fro'))
-    print("[qdrift_simulate] final trott l2 dist: ", np.linalg.norm(trott_out - expected, ord='fro'))
 
 test = True
 if test:
