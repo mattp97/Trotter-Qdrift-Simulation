@@ -73,7 +73,8 @@ class TrotterSim:
     # into one single function.
     def first_order_op(self, op_time):
         evol_op = np.identity(self.hilbert_dim)
-        for h_term in self.hamiltonian_list:
+        for ix in range(len(self.hamiltonian_list)):
+            h_term = self.hamiltonian_list[ix] * self.spectral_norms[ix]
             exp_h = linalg.expm(1.0j * op_time  * h_term)
             evol_op = np.matmul(evol_op, exp_h)
         return evol_op
@@ -82,12 +83,14 @@ class TrotterSim:
         evol_op = np.identity(self.hilbert_dim)
         # Forwards terms
         for ix in range(len(self.hamiltonian_list)):
-            exp_h = linalg.expm(1.0j * op_time * self.hamiltonian_list[ix] / 2.0)
+            h_term = self.hamiltonian_list[ix] * self.spectral_norms[ix]
+            exp_h = linalg.expm(1.0j * op_time * h_term / 2.0)
             evol_op = np.matmul(evol_op, exp_h)
         
         # Backwards terms
         for ix in range(len(self.hamiltonian_list)):
-            exp_h = linalg.expm(1.0j * op_time * self.hamiltonian_list[- ix - 1] / 2.0)
+            h_term = self.hamiltonian_list[- ix - 1] * self.spectral_norms[- ix - 1]
+            exp_h = linalg.expm(1.0j * op_time * h_term / 2.0)
             evol_op = np.matmul(evol_op, exp_h)
         return evol_op
 
@@ -186,12 +189,11 @@ class QDriftSimulator:
 
     def simulate(self, time, samples):
         evol_op = np.identity(self.hilbert_dim)
-        tau = time / (samples * np.sum(self.spectral_norms))
+        tau = time * np.sum(self.spectral_norms) / (samples * 1.0)
         for n in range(samples):
             ix = self.draw_hamiltonian_sample()
             exp_h = linalg.expm(1.j * tau * self.hamiltonian_list[ix])
             evol_op = np.matmul(exp_h, evol_op)
-        # print('[qd_sim] evol_op:\n', evol_op)
         self.final_state = np.dot(evol_op, self.initial_state)
         return np.copy(self.final_state)
 
@@ -211,19 +213,19 @@ def test_higher_order_op():
     sim = TrotterSim([sigma_x], order=6)
 
 def test_trotter():
-    time = 1
-    iterations = 1000
+    time = 10
+    iterations = 10
     X = np.array([[0, 1],[1, 0]], dtype='complex')
     Y = np.array([[0, -1j], [1j, 0]], dtype='complex')
     Z = np.array([[1, 0], [0, -1]], dtype='complex')
     I = np.array([[1, 0], [0, 1]], dtype='complex')
     
-    h1 = np.kron(X, X)
-    h2 = np.kron(X, Y)
-    h3 = np.kron(X, Z)
-    h4 = np.kron(Y, Z)
-    h5 = np.kron(Y, Y)
     h1 = np.random.random() * np.kron(X, X)
+    h2 = np.random.random() * np.kron(X, Y)
+    h3 = np.random.random() * np.kron(X, Z)
+    h4 = np.random.random() * np.kron(Y, Z)
+    h5 = np.random.random() * np.kron(Y, Y)
+    # h1 = np.random.random() * np.kron(X, X)
 
     h = [h1, h2, h3, h4, h5]
     input_state = np.array([1, 0, 0, 0], dtype='complex').reshape((4,1))
@@ -236,7 +238,7 @@ def test_trotter():
     infidelities = []
     out = sim.simulate(time, iterations)
     infidelities.append(1. - np.abs(np.dot(expected.conj().T, out))**2)
-    # print("[test_trotter] infidelities: ", infidelities)
+    print("[test_trotter] infidelities: ", infidelities)
 
 def test_qdrift():
     time = 0.3
@@ -269,7 +271,7 @@ def test_qdrift():
         fidelities.append(tmp)
     print("[test_qd] empirical infidelity: ", 1 - sum(fidelities) / (1. * num_samps))
 
-test = False
+test = True
 if test:
     test_first_order_op()
     test_second_order_op()
