@@ -212,7 +212,7 @@ def test_higher_order_op():
 
 def test_trotter():
     time = 1
-    iterations = 1000000000
+    iterations = 1000
     X = np.array([[0, 1],[1, 0]], dtype='complex')
     Y = np.array([[0, -1j], [1j, 0]], dtype='complex')
     Z = np.array([[1, 0], [0, -1]], dtype='complex')
@@ -239,7 +239,7 @@ def test_trotter():
     # print("[test_trotter] infidelities: ", infidelities)
 
 def test_qdrift():
-    time = 1.2345
+    time = 0.3
     bigN = 500
     X = np.array([[0, 1],[1, 0]], dtype='complex')
     Y = np.array([[0, -1j], [1j, 0]], dtype='complex')
@@ -257,16 +257,19 @@ def test_qdrift():
     qdsim = QDriftSimulator(h)
     qdsim.set_initial_state(input_state)
 
-    trott_sim = TrotterSim(h, 1)
-    trott_sim.set_initial_state(input_state)
-
     exact_op = linalg.expm(1j * sum(h) * time)
     expected = np.dot(exact_op, input_state)
+    
+    fidelities = []
+    num_samps = 50
+    print("here we go")
+    for ix in range(50):
+        qd_out = qdsim.simulate(time, bigN)
+        tmp = np.abs(np.dot(expected.conj().T, qd_out))**2
+        fidelities.append(tmp)
+    print("[test_qd] empirical infidelity: ", 1 - sum(fidelities) / (1. * num_samps))
 
-    qd_out = qdsim.simulate(time, bigN)
-    trott_out = trott_sim.simulate(time, 100)
-
-test = True
+test = False
 if test:
     test_first_order_op()
     test_second_order_op()
