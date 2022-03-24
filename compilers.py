@@ -205,6 +205,15 @@ class QDriftSimulator:
         self.final_state = np.dot(evol_op, self.initial_state)
         return np.copy(self.final_state)
 
+    def sample_channel_inf(self, time, samples, mcsamples):
+        sample_fidelity = []
+        for s in range(mcsamples):
+            sim_state = self.simulate(time, samples)
+            good_state = np.dot(linalg.expm(1j * sum(self.hamiltonian_list) * time), self.initial_state)
+            sample_fidelity.append((np.abs(np.dot(good_state.conj().T, sim_state)))**2)
+        infidelity = 1 - sum(sample_fidelity) / mcsamples 
+        return infidelity
+    
 # Create a simple evolution operator, compare the difference with known result. Beware floating pt
 # errors
 # H = sigma_X
@@ -279,7 +288,7 @@ def test_qdrift():
         fidelities.append(tmp)
     print("[test_qd] empirical infidelity: ", 1 - sum(fidelities) / (1. * num_samps))
 
-test = True
+test = False
 if test:
     test_first_order_op()
     test_second_order_op()
