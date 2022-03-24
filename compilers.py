@@ -122,6 +122,14 @@ class TrotterSim:
         self.final_state = np.dot(evol_op, self.initial_state)
         return np.copy(self.final_state)
 
+    def trotter_infidelity(self, time, iterations):
+        sim_state = simulate(self, time, iterations)
+        good_state = linalg.expm(1j * self.hamiltonian_list * time) @ self.initial_state
+        infidelity = 1 - (np.abs(np.conjugate(good_state) @ sim_state))**2
+        return infidelity
+    
+    #def error_plot()
+    
 class QDriftSimulator:
     def __init__(self, hamiltonian_list = [], rng_seed = 1):
         self.hamiltonian_list = []
