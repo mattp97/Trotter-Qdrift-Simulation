@@ -123,9 +123,9 @@ class TrotterSim:
         return np.copy(self.final_state)
 
     def trotter_infidelity(self, time, iterations):
-        sim_state = simulate(self, time, iterations)
-        good_state = linalg.expm(1j * self.hamiltonian_list * time) @ self.initial_state
-        infidelity = 1 - (np.abs(np.conjugate(good_state) @ sim_state))**2
+        sim_state = self.simulate(time, iterations)
+        good_state = np.dot(linalg.expm(1j * sum(self.hamiltonian_list) * time), self.initial_state)
+        infidelity = 1 - (np.abs(np.dot(good_state.conj().T, sim_state)))**2
         return infidelity
     
     #def error_plot()
