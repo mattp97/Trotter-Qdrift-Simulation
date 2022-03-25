@@ -226,9 +226,6 @@ def test_higher_order_op():
     sim = TrotterSim([sigma_x], order=6)
 
 def test_trotter():
-    time = 10
-    iterations = 10
-
     hilb_dim = 16
     X = np.array([[0, 1],[1, 0]], dtype='complex')
     Y = np.array([[0, -1j], [1j, 0]], dtype='complex')
@@ -252,33 +249,44 @@ def test_trotter():
     h4 += h1.conjugate().T
     h5 = np.random.randn(hilb_dim, hilb_dim) + 1j * np.random.randn(hilb_dim, hilb_dim)
     h5 += h1.conjugate().T
+    h6 = np.random.randn(hilb_dim, hilb_dim) + 1j * np.random.randn(hilb_dim, hilb_dim)
+    h6 += h1.conjugate().T
 
-    h = [h1, h2, h3, h4, h5]
+    h = [h1, h2, h3, h4, h5, h6]
     input_state = np.array([1] + [0] * (hilb_dim - 1), dtype='complex').flatten()
 
-    sim = TrotterSim(h, order = 4)
-    sim.set_initial_state(input_state)
+    sim1 = TrotterSim(h, order = 1)
+    sim1.set_initial_state(input_state)
+    sim2 = TrotterSim(h, order = 2)
+    sim2.set_initial_state(input_state)
+    sim4 = TrotterSim(h, order = 4)
+    sim4.set_initial_state(input_state)
 
-    exact_op = linalg.expm(1.j * sum(h) * time)
-    expected = np.dot(exact_op, input_state)
-
-    iterations = 2**14
+    iterations = 2**16
     t_list = np.logspace(-4, -1, 100)
-    infidelities = []
+    inf1 = []
+    inf2 = []
+    inf4 = []
     for t in t_list:
-        infidelities.append(sim.infidelity(t, iterations))
-    log_inf = np.log10(infidelities).flatten().tolist()
+        inf1.append(sim1.infidelity(t, iterations))
+        inf2.append(sim2.infidelity(t, iterations))
+        inf4.append(sim4.infidelity(t, iterations))
+    log_inf1 = np.log10(inf1).flatten()
+    log_inf2 = np.log10(inf2).flatten()
+    log_inf4 = np.log10(inf4).flatten()
     log_t = np.log10(t_list)
 
-    
+    # Note we use the same t scale for all orders
+    fig, axs = plt.subplots(3, sharex = True)
+    fig.suptitle("Log-log t vs infidelity for Trotter formula orders 1, 2, and 4")
 
-    plt.figure(figsize = (15, 7))
-    plt.plot(log_t, log_inf, 'bo-')
-    plt.xlabel('log(time)', size = 12)
-    plt.ylabel('log(infidelity)', size = 12)
+    # Order 1
+    axs[0].set_title("Order 1")
+    axs[0].plot(log_t, log_inf1, 'bo-')
+    axs[0].set(ylabel='log(infidelity)')
 
     fit_points = 50 # declare the starting point to fit in the data
-    p = np.polyfit(log_t[0 : fit_points], log_inf[0 : fit_points], 1)
+    p = np.polyfit(log_t[0 : fit_points], log_inf1[0 : fit_points], 1)
     f = np.poly1d(p)
 
     t_new = np.linspace(log_t[fit_points], log_t[-1], 50)
@@ -288,8 +296,46 @@ def test_trotter():
     poly = sum(S("{:6.2f}".format(v)) * data**i for i, v in enumerate(p[::-1]))
     eq_latex = printing.latex(poly)
 
-    plt.plot(t_new, y_new, 'r--', label = "${}$".format(eq_latex))
-    plt.legend(fontsize = "large")
+    axs[0].plot(t_new, y_new, 'r--', label = "${}$".format(eq_latex))
+    axs[0].legend(fontsize = "large")
+
+    # Order 2
+    axs[1].set_title("Order 2")
+    axs[1].plot(log_t, log_inf2, 'bo-')
+    axs[1].set(ylabel='log(infidelity)')
+
+    fit_points = 50 # declare the starting point to fit in the data
+    p = np.polyfit(log_t[0 : fit_points], log_inf2[0 : fit_points], 1)
+    f = np.poly1d(p)
+
+    t_new = np.linspace(log_t[fit_points], log_t[-1], 50)
+    y_new = f(t_new)
+
+    data = symbols("t")
+    poly = sum(S("{:6.2f}".format(v)) * data**i for i, v in enumerate(p[::-1]))
+    eq_latex = printing.latex(poly)
+
+    axs[1].plot(t_new, y_new, 'r--', label = "${}$".format(eq_latex))
+    axs[1].legend(fontsize = "large")
+
+    # Order 4
+    axs[2].set_title("Order 4")
+    axs[2].plot(log_t, log_inf4, 'bo-')
+    axs[2].set(ylabel='log(infidelity)')
+
+    fit_points = 50 # declare the starting point to fit in the data
+    p = np.polyfit(log_t[0 : fit_points], log_inf4[0 : fit_points], 1)
+    f = np.poly1d(p)
+
+    t_new = np.linspace(log_t[fit_points], log_t[-1], 50)
+    y_new = f(t_new)
+
+    data = symbols("t")
+    poly = sum(S("{:6.2f}".format(v)) * data**i for i, v in enumerate(p[::-1]))
+    eq_latex = printing.latex(poly)
+
+    axs[2].plot(t_new, y_new, 'r--', label = "${}$".format(eq_latex))
+    axs[2].legend(fontsize = "large")
     plt.show()
 
 
