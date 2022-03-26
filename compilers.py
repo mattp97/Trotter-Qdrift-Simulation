@@ -214,6 +214,16 @@ class QDriftSimulator:
         infidelity = 1 - sum(sample_fidelity) / mcsamples 
         return infidelity
     
+
+#class CompositeSim:
+    #def __init__(self, hamiltonian_list = [], rng_seed = 1, order = 1):
+        
+        
+ 
+
+
+
+    
 # Create a simple evolution operator, compare the difference with known result. Beware floating pt
 # errors
 # H = sigma_X
