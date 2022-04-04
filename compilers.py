@@ -85,9 +85,17 @@ class TrotterSim:
             evol_op = np.matmul(evol_op, exp_h)
         return evol_op
     
+    def first_order_op_reverse(self, op_time):
+        evol_op = np.identity(self.hilbert_dim)
+        for ix in range(1, len(self.hamiltonian_list)+1):
+            h_term = self.hamiltonian_list[-ix] * self.spectral_norms[-ix]
+            exp_h = linalg.expm(1.0j * op_time  * h_term)
+            evol_op = np.matmul(evol_op, exp_h)
+        return evol_op
+    
     def second_order_op(self, op_time):
         forward = self.first_order_op(op_time / 2.0)
-        backward = self.first_order_op(-1 * op_time / 2.0).conjugate().T
+        backward = self.first_order_op_reverse(op_time / 2.0)
         return np.matmul(backward, forward)
 
     def higher_order_op(self, order, op_time):
@@ -124,7 +132,37 @@ class TrotterSim:
         infidelity = 1 - (np.abs(np.dot(good_state.conj().T, sim_state)))**2
         return infidelity
     
-    #def error_plot()
+
+#Trotter Simulator... same as above but with matrix vector multiplicaiton. Above alg seems to be doing something weird.
+class TrotterSim2:
+    def __init__(self, hamiltonian_list = [], order = 1):
+        self.hamiltonian_list = []
+        self.spectral_norms = []
+        self.hilbert_dim = hamiltonian_list[0].shape[0]
+        self.order = order
+
+        # Use the first computational basis state as the initial state until the user specifies.
+        self.initial_state = np.zeros((self.hilbert_dim, 1))
+        self.initial_state[0] = 1
+        self.final_state = np.copy(self.initial_state)
+
+        self.prep_hamiltonian_lists(hamiltonian_list)
+        
+        
+
+    
+
+# QDRIFT Simulator
+# Inputs
+# - hamiltonian_list: List of terms that compose your overall hamiltonian. Data type of each entry
+#                     in the list is numpy matrix (preferably sparse, no guarantee on data struct
+#                     actually used). Ex: H = A + B + C + D --> hamiltonian_list = [A, B, C, D]
+#                     ASSUME SQUARE MATRIX INPUTS
+# - time: Floating point (no size guarantees) representing time for TOTAL simulation, NOT per
+#         iteration. "t" parameter in the literature.
+# - samples: "big_N" parameter. This object controls the number of times we sample from the QDrift channel, and each
+#            exponetial is applied with time replaced by time*sum(spectral_norms)/big_N.
+# - rng_seed: Seed for the random number generator so results are reproducible.
     
 class QDriftSimulator:
     def __init__(self, hamiltonian_list = [], rng_seed = 1):
@@ -197,7 +235,7 @@ class QDriftSimulator:
         for n in range(samples):
             ix = self.draw_hamiltonian_sample()
             exp_h = linalg.expm(1.j * tau * self.hamiltonian_list[ix])
-            evol_op = np.matmul(exp_h, evol_op)
+            evol_op = np.matmul(exp_h, evol_op) #considering making this matrix vector mult
         self.final_state = np.dot(evol_op, self.initial_state)
         return np.copy(self.final_state)
 
@@ -211,9 +249,17 @@ class QDriftSimulator:
         return infidelity
     
 
-#class CompositeSim:
-    #def __init__(self, hamiltonian_list = [], rng_seed = 1, order = 1):
-        
+# Composite Simulator
+# Inputs
+# - hamiltonian_list: List of terms that compose your overall hamiltonian. Data type of each entry
+#                     in the list is numpy matrix (preferably sparse, no guarantee on data struct
+#                     actually used). Ex: H = A + B + C + D --> hamiltonian_list = [A, B, C, D]
+#                     ASSUME SQUARE MATRIX INPUTS
+# - time: Floating point (no size guarantees) representing time for TOTAL simulation, NOT per
+#         iteration. "t" parameter in the literature.
+# - samples: "big_N" parameter. This object controls the number of times we sample from the QDrift channel, and each
+#            exponetial is applied with time replaced by time*sum(spectral_norms)/big_N.
+# - rng_seed: Seed for the random number generator so results are reproducible.
         
  
 
