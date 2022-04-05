@@ -336,11 +336,12 @@ class QDriftSimulator:
     def simulate(self, time, samples):
         evol_op = np.identity(self.hilbert_dim)
         tau = time * np.sum(self.spectral_norms) / (samples * 1.0)
+        final = np.copy(self.initial_state)
         for n in range(samples):
             ix = self.draw_hamiltonian_sample()
             exp_h = linalg.expm(1.j * tau * self.hamiltonian_list[ix])
-            evol_op = np.matmul(exp_h, evol_op) #considering making this matrix vector mult
-        self.final_state = np.dot(evol_op, self.initial_state)
+            final = exp_h @ final
+        self.final_state = final
         return np.copy(self.final_state)
 
     def sample_channel_inf(self, time, samples, mcsamples):
@@ -367,11 +368,6 @@ class QDriftSimulator:
 # - samples: "big_N" parameter. This object controls the number of times we sample from the QDrift channel, and each
 #            exponetial is applied with time replaced by time*sum(spectral_norms)/big_N.
 # - rng_seed: Seed for the random number generator so results are reproducible.
-        
- 
-
-
-
     
 # Create a simple evolution operator, compare the difference with known result. Beware floating pt
 # errors
@@ -526,7 +522,6 @@ def test_qdrift():
     
     fidelities = []
     num_samps = 50
-    print("here we go")
     for ix in range(50):
         qd_out = qdsim.simulate(time, bigN)
         tmp = np.abs(np.dot(expected.conj().T, qd_out))**2
