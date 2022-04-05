@@ -121,19 +121,24 @@ class TrotterSim:
         if type(iterations) != type(3) or iterations < 1:
             print("[simulate] Incorrect type for iterations, must be integer greater than 1.")
             return 1
-        evol_op = self.higher_order_op(self.order, (1.0 * time) / (1.0* iterations))
+        evol_op = self.higher_order_op(self.order, (1.0 * time) / (1.0 * iterations))
         evol_op = np.linalg.matrix_power(evol_op, iterations)
         self.final_state = np.dot(evol_op, self.initial_state)
         return np.copy(self.final_state)
 
     def infidelity(self, time, iterations):
+        H = []
+        for i in range(len(self.spectral_norms)):
+            H.append(self.hamiltonian_list[i] * self.spectral_norms[i])
         sim_state = self.simulate(time, iterations)
-        good_state = np.dot(linalg.expm(1j * sum(self.hamiltonian_list) * time), self.initial_state)
-        infidelity = 1 - (np.abs(np.dot(good_state.conj().T, sim_state)))**2
+        good_state = np.dot(linalg.expm(1j * sum(H) * time), self.initial_state)
+        #infidelity = 1 - (np.abs(np.dot(good_state.conj().T, sim_state)))**2
+        infidelity = (np.linalg.norm(sim_state - good_state))
         return infidelity
     
 
 #Trotter Simulator... same as above but with matrix vector multiplicaiton. Above alg seems to be doing something weird.
+#Needs cleaning up and a recursive method for higher order product formulas 
 class TrotterSim2:
     def __init__(self, hamiltonian_list = [], order = 1):
         self.hamiltonian_list = []
@@ -147,11 +152,110 @@ class TrotterSim2:
         self.final_state = np.copy(self.initial_state)
 
         self.prep_hamiltonian_lists(hamiltonian_list)
-        
-        
-
     
+    # Helper function to compute spectral norm list. Used solely constructor
+    def prep_hamiltonian_lists(self, ham_list):
+        for h in ham_list:
+            temp_norm = np.linalg.norm(h, ord=2)
+            if temp_norm < FLOATING_POINT_PRECISION:
+                print("[prep_hamiltonian_lists] Spectral norm of a hamiltonian found to be 0")
+                self.spectral_norms = []
+                self.hamiltonian_list = []
+                return 1
+            self.spectral_norms.append(temp_norm)
+            self.hamiltonian_list.append(h / temp_norm)
+        return 0
 
+    # Do some sanity checking before storing. Check if input is proper dimensions and an actual
+    # quantum state.
+    def set_initial_state(self, psi_init):
+        global FLOATING_POINT_PRECISION
+        if type(psi_init) != type(self.initial_state):
+            print("[set_initial_state]: input type not numpy ndarray")
+            return 1
+
+        if psi_init.size != self.initial_state.size:
+            print("[set_initial_state]: input size not matching")
+            return 1
+
+        # check that the frobenius aka l2 norm is 1
+        if np.linalg.norm(psi_init, ord = 2) - 1.0 > FLOATING_POINT_PRECISION:
+            print("[set_initial_state]: input is not properly normalized")
+            return 1
+
+        # check that each dimension has magnitude between 0 and 1
+        for ix in range(len(psi_init)):
+            if np.abs(psi_init[ix]) > 1.0:
+                print("[set_initial_state]: too big of a dimension in vector")
+                return 1
+
+        # Should be good to go now
+        self.initial_state = psi_init
+        return 0
+
+    def first_order(self, op_time):
+        ops_list = []
+        for i in range(len(self.spectral_norms)):
+            ops_list.append(linalg.expm(1j*self.spectral_norms[i]* op_time *self.hamiltonian_list[i]))
+        return ops_list
+                            
+    def second_order(self, op_time):
+        ops_list = []
+        for i in range(len(self.spectral_norms)):
+            ops_list.append(linalg.expm(1j*self.spectral_norms[i]* op_time/2 * self.hamiltonian_list[i]))
+        for i in range(1, len(self.spectral_norms)+1):
+            ops_list.append(linalg.expm(1j*self.spectral_norms[-i]* op_time/2 * self.hamiltonian_list[-i]))
+        return ops_list
+
+    def higher_order(self, order, op_time):
+        if type(order) != type(2):
+            print("[higher_order_op] provided input order (" + str(order) + ") is not an integer")
+            return 1
+        elif order == 1:
+            return self.first_order(op_time)
+        elif order == 2:
+            return self.second_order(op_time)
+        elif order == 4:
+            time_const = 1.0/(4 - 4**(1.0/(order - 1)))
+            fourth_order_op = []
+            #for i in range(1, order/2):
+            outer = []
+            inner = []
+            outer.append(self.second_order(op_time))
+            for i in range(len(self.spectral_norms)):
+                inner.append(linalg.expm(1j*self.spectral_norms[i]* op_time/2 * self.hamiltonian_list[i]))
+            for i in range(1, len(self.spectral_norms)+1):
+                inner.append(linalg.expm(1j*self.spectral_norms[-i]* op_time/2 * self.hamiltonian_list[-i]))
+            fourth_order_op.append(outer)
+            fourth_order_op.append(outer)
+            fourth_order_op.append(inner)             #removed [:]
+            fourth_order_op.append(outer)
+            fourth_order_op.append(outer)
+            return fourth_order_op
+                             
+        else:
+            print("[higher_order_op] Encountered incorrect order (" + str(order) + ") for trotter formula")
+            return 1
+                             
+    def simulate(self, time, iterations):
+        op_time = time/iterations
+        evol_op = self.higher_order(self.order, op_time)
+        Psi = self.initial_state
+        for i in range(0, len(evol_op) * iterations):
+            Psi = evol_op[i % len(evol_op)] @ Psi
+        return Psi
+
+    def infidelity(self, time, iterations):
+        H = []
+        for i in range(len(self.spectral_norms)):
+            H.append(self.hamiltonian_list[i] * self.spectral_norms[i]) #This might be the error
+        sim_state = self.simulate(time, iterations)
+        good_state = np.dot(linalg.expm(1j * sum(H) * time), self.initial_state)
+        #infidelity = 1 - (np.abs(np.dot(good_state.conj().T, sim_state)))**2
+        infidelity = (np.linalg.norm(sim_state - good_state))                     
+        return infidelity                         
+    
+    
 # QDRIFT Simulator
 # Inputs
 # - hamiltonian_list: List of terms that compose your overall hamiltonian. Data type of each entry
@@ -241,9 +345,12 @@ class QDriftSimulator:
 
     def sample_channel_inf(self, time, samples, mcsamples):
         sample_fidelity = []
+        H = []
+        for i in range(len(self.spectral_norms)):
+            H.append(self.hamiltonian_list[i] * self.spectral_norms[i])
         for s in range(mcsamples):
             sim_state = self.simulate(time, samples)
-            good_state = np.dot(linalg.expm(1j * sum(self.hamiltonian_list) * time), self.initial_state)
+            good_state = np.dot(linalg.expm(1j * sum(H) * time), self.initial_state)
             sample_fidelity.append((np.abs(np.dot(good_state.conj().T, sim_state)))**2)
         infidelity = 1 - sum(sample_fidelity) / mcsamples 
         return infidelity
