@@ -353,7 +353,7 @@ class QDriftSimulator:
             sim_state = self.simulate(time, samples)
             good_state = np.dot(linalg.expm(1j * sum(H) * time), self.initial_state)
             sample_fidelity.append((np.abs(np.dot(good_state.conj().T, sim_state)))**2)
-        infidelity = 1 - sum(sample_fidelity) / mcsamples 
+        infidelity = 1- sum(sample_fidelity) / mcsamples 
         return infidelity
     
 
@@ -368,7 +368,187 @@ class QDriftSimulator:
 # - samples: "big_N" parameter. This object controls the number of times we sample from the QDrift channel, and each
 #            exponetial is applied with time replaced by time*sum(spectral_norms)/big_N.
 # - rng_seed: Seed for the random number generator so results are reproducible.
-    
+# - order: The Trotter-Suzuki product formula order for both the inner and outer loop of the algorithm
+# - partition: a string indicating how to divide the simulation into a composition of Trotter and QDrift steps. Has 2 options 
+#             for either probabilistic partitioning or an optimized cost partition.
+            
+class CompositeSim:
+    def __init__(self, hamiltonian_list = [], order = 1, partition = "random", rng_seed = 1):
+        self.hamiltonian_list = []
+        self.spectral_norms = []
+        self.A_list = [] #A containing Trotter terms and B containing QDrift
+        self.B_list = []
+        self.a_norms = []
+        self.b_norms = []
+        self.hilbert_dim = hamiltonian_list[0].shape[0]
+        self.rng_seed = rng_seed
+        self.order = order
+        self.partition = partition
+        
+        # Use the first computational basis state as the initial state until the user specifies.
+        self.initial_state = np.zeros((self.hilbert_dim, 1))
+        self.initial_state[0] = 1.
+        self.final_state = np.copy(self.initial_state)
+
+        self.prep_hamiltonian_lists(hamiltonian_list) #do we want this done before or after the partitioning?
+        np.random.seed(self.rng_seed)
+        self.partitioning(hamiltonian_list) #note error was raised because partition() is a built in python method
+        l = len(self.a_norms)
+        ll = len(self.b_norms)
+        print(l)
+        print(ll)
+     
+    def prep_hamiltonian_lists(self, ham_list):
+        for h in ham_list:
+            temp_norm = np.linalg.norm(h, ord=2)
+            if temp_norm < FLOATING_POINT_PRECISION:
+                print("[prep_hamiltonian_lists] Spectral norm of a hamiltonian found to be 0")
+                self.spectral_norms = []
+                self.hamiltonian_list = []
+                return 1
+            self.spectral_norms.append(temp_norm)
+            self.hamiltonian_list.append(h / temp_norm)
+        return 0
+
+    # Do some sanity checking before storing. Check if input is proper dimensions and an actual
+    # quantum state.
+    def set_initial_state(self, psi_init):
+        global FLOATING_POINT_PRECISION
+        if type(psi_init) != type(self.initial_state):
+            print("[set_initial_state]: input type not numpy ndarray")
+            return 1
+
+        if psi_init.size != self.initial_state.size:
+            print("[set_initial_state]: input size not matching")
+            return 1
+
+        # check that the frobenius aka l2 norm is 1
+        if np.linalg.norm(psi_init, ord = 2) - 1.0 > FLOATING_POINT_PRECISION:
+            print("[set_initial_state]: input is not properly normalized")
+            return 1
+
+        # check that each dimension has magnitude between 0 and 1
+        for ix in range(len(psi_init)):
+            if np.abs(psi_init[ix]) > 1.0:
+                print("[set_initial_state]: too big of a dimension in vector")
+                return 1
+
+        # Should be good to go now
+        self.initial_state = psi_init
+        return 0
+
+    #partitioning method to execute the partitioning method of the users choice, random likely not used in practice
+    def partitioning(self, hamiltonian_list):
+        if self.partition == "prob":
+            ops = probabilistic_partition(self.hamiltonian_list)
+            return ops
+        
+        elif self.partition == "optimize":
+            ops = optimal_partition(self.hamiltonian_list)
+            return ops
+        
+        elif self.partition == "random":
+            for i in range(len(self.spectral_norms)):
+                sample = np.random.random()
+                if sample >= 0.5:
+                    self.A_list.append(self.hamiltonian_list[i])
+                    self.a_norms.append(self.spectral_norms[i])
+                elif sample < 0.5:
+                    self.B_list.append(self.hamiltonian_list[i])
+                    self.b_norms.append(self.spectral_norms[i])
+            return 0
+        
+        else:
+            print("Invalid input for attribute 'partition' ")
+            return 1
+        
+    #Trotter functions -- modified from the Trotter sim to also take the list of operators to symmetrize as an input
+    def first_order(self, op_time):
+        ops_list = []
+        for i in range(len(self.a_norms)):
+            ops_list.append(linalg.expm(1j*self.a_norms[i]* op_time *self.A_list[i]))
+        return ops_list
+                            
+    def second_order(self, op_time):
+        ops_list = []
+        for i in range(len(self.a_norms)):
+            ops_list.append(linalg.expm(1j*self.a_norms[i]* op_time/2 * self.A_list[i]))
+        for i in range(1, len(self.a_norms)+1):
+            ops_list.append(linalg.expm(1j*self.a_norms[-i]* op_time/2 * self.A_list[-i]))
+        return ops_list
+
+    def higher_order(self, order, op_time):
+        if type(order) != type(2):
+            print("[higher_order_op] provided input order (" + str(order) + ") is not an integer")
+            return 1
+        elif order == 1:
+            return self.first_order(op_time)
+        elif order == 2:
+            return self.second_order(op_time)
+        elif order == 4:
+            time_const = 1.0/(4 - 4**(1.0/(order - 1)))
+            fourth_order_op = []
+            #for i in range(1, order/2):
+            outer = []
+            inner = []
+            outer.append(self.second_order(op_time))
+            for i in range(len(self.spectral_norms)):
+                inner.append(linalg.expm(1j*self.spectral_norms[i]* op_time/2 * self.hamiltonian_list[i]))
+            for i in range(1, len(self.spectral_norms)+1):
+                inner.append(linalg.expm(1j*self.spectral_norms[-i]* op_time/2 * self.hamiltonian_list[-i]))
+            fourth_order_op.append(outer)
+            fourth_order_op.append(outer)
+            fourth_order_op.append(inner)             #removed [:]
+            fourth_order_op.append(outer)
+            fourth_order_op.append(outer)
+            return fourth_order_op
+                             
+        else:
+            print("[higher_order_op] Encountered incorrect order (" + str(order) + ") for trotter formula")
+            return 1
+            
+    #QDrift functions
+    def draw_hamiltonian_sample(self):
+        sample = np.random.random()
+        tot = 0.
+        lamb = np.sum(self.b_norms)
+        for ix in range(len(self.b_norms)):
+            if sample > tot and sample < tot + self.b_norms[ix] / lamb:
+                return ix
+            tot += self.b_norms[ix] / lamb
+        return len(self.b_norms) - 1
+           
+    #Simulate and error scaling -- structure currently only makes sense for first order
+    def simulate(self, time, samples, iterations):        
+        op_time = time/iterations
+        evol_op = np.identity(self.hilbert_dim)
+        tau = time * np.sum(self.b_norms) / (samples * 1.0)
+        final = np.copy(self.initial_state)
+        for n in range(samples):
+            ix = self.draw_hamiltonian_sample()
+            exp_h = linalg.expm(1.j * tau * self.hamiltonian_list[ix])
+            final = exp_h @ final
+                           
+        evol_op = self.higher_order(self.order, op_time) #function does not currently do what I want. Uses A_list but I want it
+        for i in range(0, len(evol_op) * iterations):    # to take a matrix list as input
+            final = evol_op[i % len(evol_op)] @ final         
+                           
+        self.final_state = final
+        return np.copy(self.final_state)                                  
+            
+    #Monte-Carlo sample the infidelity, should work for composite channel    
+    def sample_channel_inf(self, time, samples, iterations, mcsamples): 
+        sample_fidelity = []
+        H = []
+        for i in range(len(self.spectral_norms)):
+            H.append(self.hamiltonian_list[i] * self.spectral_norms[i])
+        for s in range(mcsamples):
+            sim_state = self.simulate(time, samples, iterations)
+            good_state = np.dot(linalg.expm(1j * sum(H) * time), self.initial_state)
+            sample_fidelity.append((np.abs(np.dot(good_state.conj().T, sim_state)))**2)
+        infidelity = 1- sum(sample_fidelity) / mcsamples 
+        return infidelity
+            
 # Create a simple evolution operator, compare the difference with known result. Beware floating pt
 # errors
 # H = sigma_X
