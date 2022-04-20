@@ -372,19 +372,23 @@ class QDriftSimulator:
 # - partition: a string indicating how to divide the simulation into a composition of Trotter and QDrift steps. Has 2 options 
 #             for either probabilistic partitioning or an optimized cost partition.
             
+####################################################################################################################################################################################################
+#Composite simulation but using a framework with lists of tuples instead of lists of matrices for improved runtime
+#This code adopts the convention that for lists of tuples, indices are stored in [0] and values in [1]
 class CompositeSim:
     def __init__(self, hamiltonian_list = [], order = 1, partition = "random", rng_seed = 1):
         self.hamiltonian_list = []
         self.spectral_norms = []
-        self.A_list = [] #A containing Trotter terms and B containing QDrift
-        self.B_list = []
-        self.a_norms = []
+        self.a_norms = [] #contains the partitioned norms, as well as the index of the matrix they come from
         self.b_norms = []
         self.hilbert_dim = hamiltonian_list[0].shape[0]
         self.rng_seed = rng_seed
         self.order = order
         self.partition = partition
         
+        #lists of operator indices and operater times
+        self.total_list = []
+
         # Use the first computational basis state as the initial state until the user specifies.
         self.initial_state = np.zeros((self.hilbert_dim, 1))
         self.initial_state[0] = 1.
@@ -393,7 +397,7 @@ class CompositeSim:
         self.prep_hamiltonian_lists(hamiltonian_list) #do we want this done before or after the partitioning?
         np.random.seed(self.rng_seed)
         self.partitioning(hamiltonian_list) #note error was raised because partition() is a built in python method
-        l = len(self.a_norms)
+        l = len(self.a_norms) #to make the partition visible
         ll = len(self.b_norms)
         print(l)
         print(ll)
@@ -451,40 +455,40 @@ class CompositeSim:
             for i in range(len(self.spectral_norms)):
                 sample = np.random.random()
                 if sample >= 0.5:
-                    self.A_list.append(self.hamiltonian_list[i])
-                    self.a_norms.append(self.spectral_norms[i])
+                    self.a_norms.append([i, self.spectral_norms[i]])
                 elif sample < 0.5:
-                    self.B_list.append(self.hamiltonian_list[i])
-                    self.b_norms.append(self.spectral_norms[i])
+                    self.b_norms.append([i, self.spectral_norms[i]])
+            self.a_norms = np.array(self.a_norms, dtype='complex')
+            self.b_norms = np.array(self.b_norms, dtype='complex')
             return 0
         
         else:
             print("Invalid input for attribute 'partition' ")
             return 1
-        
-    #Trotter functions -- modified from the Trotter sim to also take the list of operators to symmetrize as an input
-    def first_order(self, op_time):
-        ops_list = []
-        for i in range(len(self.a_norms)):
-            ops_list.append(linalg.expm(1j*self.a_norms[i]* op_time *self.A_list[i]))
-        return ops_list
-                            
-    def second_order(self, op_time):
-        ops_list = []
-        for i in range(len(self.a_norms)):
-            ops_list.append(linalg.expm(1j*self.a_norms[i]* op_time/2 * self.A_list[i]))
-        for i in range(1, len(self.a_norms)+1):
-            ops_list.append(linalg.expm(1j*self.a_norms[-i]* op_time/2 * self.A_list[-i]))
-        return ops_list
 
-    def higher_order(self, order, op_time):
+    #Trotter functions -- modified from the Trotter sim to also take the list of tuples containing the indices of operators and their respective norms to symmetrize as an input
+    def first_order(self, op_time, norms_list):
+        ops_index = []
+        for i in range(len(norms_list)):
+            ops_index.append([norms_list[i][0], 1j * norms_list[i][1] * op_time])
+        return np.array(ops_index, dtype = 'complex')
+                            
+    def second_order(self, op_time, norms_list):
+        ops_index = []
+        for i in range(len(norms_list)):
+            ops_index.append([norms_list[i][0], 1j * norms_list[i][1] * op_time/2])
+        for i in range(1, len(norms_list)+1):
+            ops_index.append([norms_list[-i][0], 1j * norms_list[-i][1] * op_time/2])
+        return np.array(ops_index, dtype = 'complex')
+
+    def higher_order(self, op_time, order, norms_list):
         if type(order) != type(2):
             print("[higher_order_op] provided input order (" + str(order) + ") is not an integer")
             return 1
         elif order == 1:
-            return self.first_order(op_time)
+            return self.first_order(op_time, norms_list)
         elif order == 2:
-            return self.second_order(op_time)
+            return self.second_order(op_time, norms_list)
         elif order == 4:
             time_const = 1.0/(4 - 4**(1.0/(order - 1)))
             fourth_order_op = []
@@ -507,32 +511,36 @@ class CompositeSim:
             print("[higher_order_op] Encountered incorrect order (" + str(order) + ") for trotter formula")
             return 1
             
-    #QDrift functions
+    #QDrift functions, [0] and [1] show up based on where indices[0] and norms[1] are stored in the tuple
     def draw_hamiltonian_sample(self):
         sample = np.random.random()
         tot = 0.
-        lamb = np.sum(self.b_norms)
+        lamb = sum(self.b_norms)[1]
         for ix in range(len(self.b_norms)):
-            if sample > tot and sample < tot + self.b_norms[ix] / lamb:
+            if sample > tot and sample < tot + self.b_norms[ix][1] / lamb:
                 return ix
-            tot += self.b_norms[ix] / lamb
-        return len(self.b_norms) - 1
-           
-    #Simulate and error scaling -- structure currently only makes sense for first order
-    def simulate(self, time, samples, iterations):        
-        op_time = time/iterations
-        evol_op = np.identity(self.hilbert_dim)
-        tau = time * np.sum(self.b_norms) / (samples * 1.0)
-        final = np.copy(self.initial_state)
+            tot += self.b_norms[ix][1] / lamb
+        return len(self.b_norms) - 1 #why is this here again?
+
+    def qdrift_list(self, samples, time):
+        operator_index = []
+        tau = time * (sum(self.b_norms)[1]) / (samples * 1.0)
         for n in range(samples):
             ix = self.draw_hamiltonian_sample()
-            exp_h = linalg.expm(1.j * tau * self.hamiltonian_list[ix])
-            final = exp_h @ final
-                           
-        evol_op = self.higher_order(self.order, op_time) #function does not currently do what I want. Uses A_list but I want it
-        for i in range(0, len(evol_op) * iterations):    # to take a matrix list as input
-            final = evol_op[i % len(evol_op)] @ final         
-                           
+            operator_index.append([self.b_norms[ix][0], 1j * tau])
+        return np.array(operator_index, dtype = 'complex')
+
+    #Simulate and error scaling 
+    def simulate(self, time, samples, iterations):  
+        inner_loop = np.concatenate(((self.higher_order(time, self.order, self.a_norms)), (self.qdrift_list(samples, time))), 0) #creates inner loop
+
+        outer_loop = (self.higher_order(-1j/iterations, self.order, inner_loop)) #creates the outerloop, -1j so as not to multiply j again
+        
+        final = np.copy(self.initial_state)
+
+        for i in range(len(outer_loop)*iterations):
+            final = linalg.expm(outer_loop[i%len(outer_loop)][1] * self.hamiltonian_list[int((outer_loop[i%len(outer_loop)][0]).real)]) @ final
+        
         self.final_state = final
         return np.copy(self.final_state)                                  
             
@@ -548,7 +556,15 @@ class CompositeSim:
             sample_fidelity.append((np.abs(np.dot(good_state.conj().T, sim_state)))**2)
         infidelity = 1- sum(sample_fidelity) / mcsamples 
         return infidelity
-            
+
+
+
+
+
+
+
+
+
 # Create a simple evolution operator, compare the difference with known result. Beware floating pt
 # errors
 # H = sigma_X
