@@ -1,6 +1,8 @@
+from operator import matmul
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy import linalg
+from scipy import optimize
 import math
 from numpy import random
 import cmath
@@ -370,13 +372,14 @@ class QDriftSimulator:
 # - rng_seed: Seed for the random number generator so results are reproducible.
 # - order: The Trotter-Suzuki product formula order for both the inner and outer loop of the algorithm
 # - partition: a string indicating how to divide the simulation into a composition of Trotter and QDrift steps. Has 2 options 
-#             for either probabilistic partitioning or an optimized cost partition.
-            
-####################################################################################################################################################################################################
+#              for either probabilistic partitioning or an optimized cost partition.
+# - epsilon: The total error accumulated over the simulation           
+
+###############################################################################################################################################################
 #Composite simulation but using a framework with lists of tuples instead of lists of matrices for improved runtime
 #This code adopts the convention that for lists of tuples, indices are stored in [0] and values in [1]
 class CompositeSim:
-    def __init__(self, hamiltonian_list = [], order = 1, partition = "random", rng_seed = 1):
+    def __init__(self, hamiltonian_list = [], order = 1, partition = "random", rng_seed = 1, nb_optimizer = False, weight_threshold = 0.5, epsilon = 0.001):
         self.hamiltonian_list = []
         self.spectral_norms = []
         self.a_norms = [] #contains the partitioned norms, as well as the index of the matrix they come from
@@ -385,9 +388,11 @@ class CompositeSim:
         self.rng_seed = rng_seed
         self.order = order
         self.partition = partition
-        
-        #lists of operator indices and operater times
-        self.total_list = []
+        self.nb_optimizer = nb_optimizer
+        self.epsilon = epsilon #simulation error
+        self.weight_threshold = weight_threshold
+
+        self.nb = 1 #number of Qdrift channel samples. Useful to define as an attribute if we are choosing whether or not to optimize over it.
 
         # Use the first computational basis state as the initial state until the user specifies.
         self.initial_state = np.zeros((self.hilbert_dim, 1))
@@ -396,11 +401,10 @@ class CompositeSim:
 
         self.prep_hamiltonian_lists(hamiltonian_list) #do we want this done before or after the partitioning?
         np.random.seed(self.rng_seed)
-        self.partitioning(hamiltonian_list) #note error was raised because partition() is a built in python method
-        l = len(self.a_norms) #to make the partition visible
-        ll = len(self.b_norms)
-        print(l)
-        print(ll)
+        self.partitioning(self.weight_threshold) #note error was raised because partition() is a built in python method
+        
+        print("There are " + str(len(self.a_norms)) + " terms in Trotter") #make the partition known
+        print("There are " + str(len(self.b_norms)) + " terms in QDrift")
      
     def prep_hamiltonian_lists(self, ham_list):
         for h in ham_list:
@@ -441,15 +445,69 @@ class CompositeSim:
         self.initial_state = psi_init
         return 0
 
+    def nb_first_order_cost(self, weight): #first order cost, currently computes equation 31 from paper. Weight is a list of all weights with Nb in the last entry
+        cost = 0.0
+        qd_sum = 0.0
+        for i in range(len(self.spectral_norms)):
+            qd_sum += (1-weight[i]) * self.spectral_norms[i]
+            for j in range(len(self.spectral_norms)):
+                commutator_norm = np.linalg.norm(np.matmul(self.hamiltonian_list[i], self.hamiltonian_list[j]) - np.matmul(self.hamiltonian_list[j], self.hamiltonian_list[i]), ord = 2)
+                cost += (2/(5**(1/2))) * ((weight[i] * weight[j] * self.spectral_norms[i] * self.spectral_norms[j] * commutator_norm) + 
+                    (weight[i] * (1-weight[j]) * self.spectral_norms[i] * self.spectral_norms[j] * commutator_norm))
+        cost += (qd_sum**2) * 4/weight[-1] #dividing by Nb at the end (this form is just being used so I can easily optimize Nb as well)
+        return cost
+
+    def first_order_cost(self, weight): #first order cost, currently computes equation 31 from paper. Function does not have nb as an omptimizable parameter
+        cost = 0.0
+        qd_sum = 0.0
+        for i in range(len(self.spectral_norms)):
+            qd_sum += (1-weight[i]) * self.spectral_norms[i]
+            for j in range(len(self.spectral_norms)):
+                commutator_norm = np.linalg.norm(np.matmul(self.hamiltonian_list[i], self.hamiltonian_list[j]) - np.matmul(self.hamiltonian_list[j], self.hamiltonian_list[i]), ord = 2)
+                cost += (2/(5**(1/2))) * ((weight[i] * weight[j] * self.spectral_norms[i] * self.spectral_norms[j] * commutator_norm) + 
+                    (weight[i] * (1-weight[j]) * self.spectral_norms[i] * self.spectral_norms[j] * commutator_norm))
+        cost += (qd_sum**2) * 4/self.nb #dividing by Nb at the end (this form is just being used so I can easily optimize Nb as well)
+        return cost
+
+
     #partitioning method to execute the partitioning method of the users choice, random likely not used in practice
-    def partitioning(self, hamiltonian_list):
+    def partitioning(self, weight_threshold):
         if self.partition == "prob":
             ops = probabilistic_partition(self.hamiltonian_list)
             return ops
         
-        elif self.partition == "optimize":
-            ops = optimal_partition(self.hamiltonian_list)
-            return ops
+        #Nelder-Mead optimization protocol based on analytic cost function for first order
+        elif self.partition == "optimize": 
+            if self.nb_optimizer == True: #if Nb is a parameter we wish to numerically optimize
+                guess = [0.5 for x in range(len(self.spectral_norms))] #guess for the weights 
+                guess.append(2) #initial guess for Nb
+                upper_bound = [1 for x in range(len(self.spectral_norms))]
+                upper_bound.append(np.inf) #no upper bound for Nb
+                lower_bound = [0 for x in range(len(self.spectral_norms) + 1)]  #lower bound for Nb is 0
+                optimized_weights = optimize.minimize(self.nb_first_order_cost, guess, method='Nelder-Mead', bounds=optimize.Bounds(upper_bound, lower_bound))
+                for i in range(len(self.spectral_norms)):
+                    if optimized_weights.x[i] >= weight_threshold:
+                        self.a_norms.append(optimized_weights.x[i])
+                    elif optimized_weights.x[i] < weight_threshold:
+                        self.b_norms.append(optimized_weights.x[i])
+                self.a_norms = np.array(self.a_norms, dtype='complex')
+                self.b_norms = np.array(self.b_norms, dtype='complex')
+                self.nb = int(optimized_weights.x[-1] + 1) #nb must be of type int so take the ceiling 
+                return 0
+
+            if self.nb_optimizer == False: #same as above leaving Nb as user-defined
+                guess = [0.5 for x in range(len(self.spectral_norms))] #guess for the weights 
+                upper_bound = [1 for x in range(len(self.spectral_norms))]
+                lower_bound = [0 for x in range(len(self.spectral_norms))]  
+                optimized_weights = optimize.minimize(self.first_order_cost, guess, method='Nelder-Mead', bounds=optimize.Bounds(upper_bound, lower_bound))
+                for i in range(len(self.spectral_norms)):
+                    if optimized_weights.x[i] >= weight_threshold:
+                        self.a_norms.append(optimized_weights.x[i])
+                    elif optimized_weights.x[i] < weight_threshold:
+                        self.b_norms.append(optimized_weights.x[i])
+                self.a_norms = np.array(self.a_norms, dtype='complex')
+                self.b_norms = np.array(self.b_norms, dtype='complex')
+                return 0
         
         elif self.partition == "random":
             for i in range(len(self.spectral_norms)):
@@ -531,18 +589,31 @@ class CompositeSim:
         return np.array(operator_index, dtype = 'complex')
 
     #Simulate and error scaling 
-    def simulate(self, time, samples, iterations):  
-        inner_loop = np.concatenate(((self.higher_order(time, self.order, self.a_norms)), (self.qdrift_list(samples, time))), 0) #creates inner loop
+    def simulate(self, time, samples, iterations, do_outer_loop): 
+        if self.nb_optimizer == False: 
+            self.nb = samples
+        else: pass  #specifying the number of samples having optimized Nb does nothing
 
-        outer_loop = (self.higher_order(-1j/iterations, self.order, inner_loop)) #creates the outerloop, -1j so as not to multiply j again
-        
-        final = np.copy(self.initial_state)
+        if do_outer_loop == True:
+            inner_loop = np.concatenate(((self.higher_order(time, self.order, self.a_norms)), (self.qdrift_list(self.nb, time))), 0) #creates inner loop
+            outer_loop = (self.higher_order(-1j/iterations, self.order, inner_loop)) #creates the outerloop, -1j so as not to multiply j again
+            final = np.copy(self.initial_state)
 
-        for i in range(len(outer_loop)*iterations):
-            final = linalg.expm(outer_loop[i%len(outer_loop)][1] * self.hamiltonian_list[int((outer_loop[i%len(outer_loop)][0]).real)]) @ final
+            for i in range(len(outer_loop)*iterations):
+                final = linalg.expm(outer_loop[i%len(outer_loop)][1] * self.hamiltonian_list[int((outer_loop[i%len(outer_loop)][0]).real)]) @ final
         
-        self.final_state = final
-        return np.copy(self.final_state)                                  
+            self.final_state = final
+            return np.copy(self.final_state)
+
+        elif do_outer_loop ==  False:
+            inner_loop = np.concatenate(((self.higher_order(time/iterations, self.order, self.a_norms)), (self.qdrift_list(self.nb, time/iterations))), 0) #creates inner loop
+            final = np.copy(self.initial_state)
+
+            for i in range(len(inner_loop)*iterations):
+                final = linalg.expm(inner_loop[i%len(inner_loop)][1] * self.hamiltonian_list[int((inner_loop[i%len(inner_loop)][0]).real)]) @ final
+
+            self.final_state = final
+            return np.copy(self.final_state)
             
     #Monte-Carlo sample the infidelity, should work for composite channel    
     def sample_channel_inf(self, time, samples, iterations, mcsamples): 
@@ -556,10 +627,6 @@ class CompositeSim:
             sample_fidelity.append((np.abs(np.dot(good_state.conj().T, sim_state)))**2)
         infidelity = 1- sum(sample_fidelity) / mcsamples 
         return infidelity
-
-
-
-
 
 
 
