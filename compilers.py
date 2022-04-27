@@ -401,11 +401,12 @@ class CompositeSim:
 
         self.prep_hamiltonian_lists(hamiltonian_list) #do we want this done before or after the partitioning?
         np.random.seed(self.rng_seed)
-        self.partitioning(self.weight_threshold) #note error was raised because partition() is a built in python method
+        self.partitioning() #note error was raised because partition() is a built in python method
         
         print("There are " + str(len(self.a_norms)) + " terms in Trotter") #make the partition known
         print("There are " + str(len(self.b_norms)) + " terms in QDrift")
-     
+        print("Nb is equal to " + str(self.nb))
+
     def prep_hamiltonian_lists(self, ham_list):
         for h in ham_list:
             temp_norm = np.linalg.norm(h, ord=2)
@@ -471,7 +472,7 @@ class CompositeSim:
 
 
     #partitioning method to execute the partitioning method of the users choice, random likely not used in practice
-    def partitioning(self, weight_threshold):
+    def partitioning(self):
         if self.partition == "prob":
             ops = probabilistic_partition(self.hamiltonian_list)
             return ops
@@ -482,14 +483,15 @@ class CompositeSim:
                 guess = [0.5 for x in range(len(self.spectral_norms))] #guess for the weights 
                 guess.append(2) #initial guess for Nb
                 upper_bound = [1 for x in range(len(self.spectral_norms))]
-                upper_bound.append(np.inf) #no upper bound for Nb
+                upper_bound.append(20) #no upper bound for Nb but set to some number we can compute instead of np.inf
                 lower_bound = [0 for x in range(len(self.spectral_norms) + 1)]  #lower bound for Nb is 0
                 optimized_weights = optimize.minimize(self.nb_first_order_cost, guess, method='Nelder-Mead', bounds=optimize.Bounds(upper_bound, lower_bound))
+                print(optimized_weights.x)
                 for i in range(len(self.spectral_norms)):
-                    if optimized_weights.x[i] >= weight_threshold:
-                        self.a_norms.append(optimized_weights.x[i])
-                    elif optimized_weights.x[i] < weight_threshold:
-                        self.b_norms.append(optimized_weights.x[i])
+                    if optimized_weights.x[i] >= self.weight_threshold:
+                        self.a_norms.append([i, self.spectral_norms[i]])
+                    elif optimized_weights.x[i] < self.weight_threshold:
+                        self.b_norms.append([i, self.spectral_norms[i]])
                 self.a_norms = np.array(self.a_norms, dtype='complex')
                 self.b_norms = np.array(self.b_norms, dtype='complex')
                 self.nb = int(optimized_weights.x[-1] + 1) #nb must be of type int so take the ceiling 
@@ -500,11 +502,12 @@ class CompositeSim:
                 upper_bound = [1 for x in range(len(self.spectral_norms))]
                 lower_bound = [0 for x in range(len(self.spectral_norms))]  
                 optimized_weights = optimize.minimize(self.first_order_cost, guess, method='Nelder-Mead', bounds=optimize.Bounds(upper_bound, lower_bound))
+                print(optimized_weights.x)
                 for i in range(len(self.spectral_norms)):
-                    if optimized_weights.x[i] >= weight_threshold:
-                        self.a_norms.append(optimized_weights.x[i])
-                    elif optimized_weights.x[i] < weight_threshold:
-                        self.b_norms.append(optimized_weights.x[i])
+                    if optimized_weights.x[i] >= self.weight_threshold:
+                        self.a_norms.append([i, self.spectral_norms[i]])
+                    elif optimized_weights.x[i] < self.weight_threshold:
+                        self.b_norms.append([i, self.spectral_norms[i]])
                 self.a_norms = np.array(self.a_norms, dtype='complex')
                 self.b_norms = np.array(self.b_norms, dtype='complex')
                 return 0
