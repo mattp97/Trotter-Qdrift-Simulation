@@ -405,7 +405,8 @@ class CompositeSim:
         
         print("There are " + str(len(self.a_norms)) + " terms in Trotter") #make the partition known
         print("There are " + str(len(self.b_norms)) + " terms in QDrift")
-        print("Nb is equal to " + str(self.nb))
+        if nb_optimizer == True:
+            print("Nb is equal to " + str(self.nb))
 
     def prep_hamiltonian_lists(self, ham_list):
         for h in ham_list:
@@ -609,7 +610,7 @@ class CompositeSim:
             return np.copy(self.final_state)
 
         elif do_outer_loop ==  False:
-            inner_loop = np.concatenate(((self.higher_order(time/iterations, self.order, self.a_norms)), (self.qdrift_list(self.nb, time/iterations))), 0) #creates inner loop
+            inner_loop = np.concatenate(((self.higher_order(time/iterations, self.order, self.a_norms)), (self.qdrift_list(self.nb, time/iterations))), 0) #creates inner loop (include number of iterations here)
             final = np.copy(self.initial_state)
 
             for i in range(len(inner_loop)*iterations):
@@ -619,13 +620,13 @@ class CompositeSim:
             return np.copy(self.final_state)
             
     #Monte-Carlo sample the infidelity, should work for composite channel    
-    def sample_channel_inf(self, time, samples, iterations, mcsamples): 
+    def sample_channel_inf(self, time, samples, iterations, mcsamples, do_outer_loop): 
         sample_fidelity = []
         H = []
         for i in range(len(self.spectral_norms)):
             H.append(self.hamiltonian_list[i] * self.spectral_norms[i])
         for s in range(mcsamples):
-            sim_state = self.simulate(time, samples, iterations)
+            sim_state = self.simulate(time, samples, iterations, do_outer_loop)
             good_state = np.dot(linalg.expm(1j * sum(H) * time), self.initial_state)
             sample_fidelity.append((np.abs(np.dot(good_state.conj().T, sim_state)))**2)
         infidelity = 1- sum(sample_fidelity) / mcsamples 
