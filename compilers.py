@@ -379,20 +379,21 @@ class QDriftSimulator:
 #Composite simulation but using a framework with lists of tuples instead of lists of matrices for improved runtime
 #This code adopts the convention that for lists of tuples, indices are stored in [0] and values in [1]
 class CompositeSim:
-    def __init__(self, hamiltonian_list = [], order = 1, partition = "random", rng_seed = 1, nb_optimizer = False, weight_threshold = 0.5, epsilon = 0.001):
+    def __init__(self, hamiltonian_list = [], order = 1, partition = "random", rng_seed = 1, nb_optimizer = False, weight_threshold = 0.5, nb = 1, epsilon = 0.001):
         self.hamiltonian_list = []
         self.spectral_norms = []
         self.a_norms = [] #contains the partitioned norms, as well as the index of the matrix they come from
         self.b_norms = []
         self.hilbert_dim = hamiltonian_list[0].shape[0]
         self.rng_seed = rng_seed
-        self.order = order
+        self.order = order #REDEFINE THIS IN TROTTER!!!!
         self.partition = partition
         self.nb_optimizer = nb_optimizer
         self.epsilon = epsilon #simulation error
         self.weight_threshold = weight_threshold
 
-        self.nb = 1 #number of Qdrift channel samples. Useful to define as an attribute if we are choosing whether or not to optimize over it.
+        self.nb = nb #number of Qdrift channel samples. Useful to define as an attribute if we are choosing whether or not to optimize over it.
+        self.time = 1 #DISCUSS THIS
 
         # Use the first computational basis state as the initial state until the user specifies.
         self.initial_state = np.zeros((self.hilbert_dim, 1))
@@ -447,6 +448,7 @@ class CompositeSim:
         self.initial_state = psi_init
         return 0
 
+    #First order cost functions to optimize over
     def nb_first_order_cost(self, weight): #first order cost, currently computes equation 31 from paper. Weight is a list of all weights with Nb in the last entry
         cost = 0.0
         qd_sum = 0.0
@@ -475,8 +477,19 @@ class CompositeSim:
     #partitioning method to execute the partitioning method of the users choice, random likely not used in practice
     def partitioning(self):
         if self.partition == "prob":
-            ops = probabilistic_partition(self.hamiltonian_list)
-            return ops
+            gamma = 2*5**(self.order -1)
+            lamb = sum(self.spectral_norms)
+            chi = (lamb/len(self.spectral_norms)) * ((self.nb * (self.epsilon/(lamb * self.time))**(1-1/(2*self.order)) * 
+            ((2*self.order + gamma)/(2*self.order +1))**(1/(2*self.order)) * gamma**(1/(2*self.order)) / 2**(1-1/self.order))**(1/2) -1) #discrepancy with order and k
+            
+            for i in range(len(self.spectral_norms)):
+                num = np.random.random()
+                prob=(1- min(self.spectral_norms[i]*chi, 1))
+                if prob >= num:
+                    self.a_norms.append(([i, self.spectral_norms[i]]))
+                else:
+                    self.b_norms.append(([i, self.spectral_norms[i]]))
+            return 0
         
         #Nelder-Mead optimization protocol based on analytic cost function for first order
         elif self.partition == "optimize": 
@@ -524,6 +537,30 @@ class CompositeSim:
             self.b_norms = np.array(self.b_norms, dtype='complex')
             return 0
         
+        elif self.partition == "chop": #cutting off at some value defined by the user
+            for i in range(len(self.spectral_norms)):
+                if self.spectral_norms[i] >= self.weight_threshold:
+                    self.a_norms.append(([i, self.spectral_norms[i]]))
+                else:
+                    self.b_norms.append(([i, self.spectral_norms[i]]))
+            self.a_norms = np.array(self.a_norms, dtype='complex')
+            self.b_norms = np.array(self.b_norms, dtype='complex')
+            return 0
+
+        elif self.partition == "trotter":
+            self.a_norms = self.spectral_norms
+            self.b_norms = []
+            self.a_norms = np.array(self.a_norms, dtype='complex')
+            self.b_norms = np.array(self.b_norms, dtype='complex')
+            return 0
+
+        elif self.partition == "qdrift":
+            self.b_norms = self.spectral_norms
+            self.a_norms = []
+            self.a_norms = np.array(self.a_norms, dtype='complex')
+            self.b_norms = np.array(self.b_norms, dtype='complex')
+            return 0
+
         else:
             print("Invalid input for attribute 'partition' ")
             return 1
