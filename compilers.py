@@ -11,6 +11,42 @@ from sympy import S, symbols, printing
 
 FLOATING_POINT_PRECISION = 1e-10
 
+# Helper function to compute the timesteps to matrix exponentials in a higher order
+# product formula. This can be done with only the length of an array, the time, and
+# the order of the simulator needed. Returns a list of tuples of the form (index, time),
+# where index refers to which hamiltonian term at that step and time refers to the scaled time.
+# Assumes your list is of the form [H_1, H_2, ... H_numTerms] 
+# For example if you want to do e^{i H_3 t} e^{i H_2 t} e^{i H_1 t} | psi >, then calling this with
+# computeTrotterTimesteps(3, t, 1) will return [(0, t), (1, t), (2, t)] where we assume your
+# Hamiltonian terms are stored like [H_1, H_2, H_3] and we return the index
+# Note the reverse ordering due to matrix multiplication :'( 
+def computeTrotterTimesteps(numTerms, simTime, trotterOrder = 1):
+    if type(trotterOrder) != type(1):
+        print('[computeTrotterTimesteps] trotterOrder input is not an int')
+        return 1
+
+    if trotterOrder == 1:
+        return [(ix, simTime) for ix in range(numTerms)]
+
+    elif trotterOrder == 2:
+        ret = []
+        firstOrder = computeTrotterTimesteps(numTerms, simTime / 2.0, 1)
+        ret += firstOrder.copy()
+        firstOrder.reverse()
+        ret += firstOrder
+        return ret
+
+    elif trotterOrder % 2 == 0:
+        timeConst = 1.0/(4 - 4**(1.0 / trotterOrder - 1))
+        outter = computeTrotterTimesteps(numTerms, timeConst * simTime, trotterOrder - 2)
+        inner = computeTrotterTimesteps(numTerms, (1. - 4. * timeConst) * simTime, trotterOrder - 2)
+        ret = [] + 2 * outter + inner + 2 * outter
+        return ret
+
+    else:
+        print("[computeTrotterTimesteps] trotterOrder seems to be bad")
+        return 1
+
 # A basic trotter simulator organizer.
 # Inputs
 # - hamiltonian_list: List of terms that compose your overall hamiltonian. Data type of each entry
@@ -195,57 +231,14 @@ class TrotterSim2:
         self.initial_state = psi_init
         return 0
 
-    def first_order(self, op_time):
-        ops_list = []
-        for i in range(len(self.spectral_norms)):
-            ops_list.append(linalg.expm(1j*self.spectral_norms[i]* op_time *self.hamiltonian_list[i]))
-        return ops_list
-                            
-    def second_order(self, op_time):
-        ops_list = []
-        for i in range(len(self.spectral_norms)):
-            ops_list.append(linalg.expm(1j*self.spectral_norms[i]* op_time/2 * self.hamiltonian_list[i]))
-        for i in range(1, len(self.spectral_norms)+1):
-            ops_list.append(linalg.expm(1j*self.spectral_norms[-i]* op_time/2 * self.hamiltonian_list[-i]))
-        return ops_list
-
-    def higher_order(self, order, op_time):
-        if type(order) != type(2):
-            print("[higher_order_op] provided input order (" + str(order) + ") is not an integer")
-            return 1
-        elif order == 1:
-            return self.first_order(op_time)
-        elif order == 2:
-            return self.second_order(op_time)
-        elif order == 4:
-            time_const = 1.0/(4 - 4**(1.0/(order - 1)))
-            fourth_order_op = []
-            #for i in range(1, order/2):
-            outer = []
-            inner = []
-            outer.append(self.second_order(op_time))
-            for i in range(len(self.spectral_norms)):
-                inner.append(linalg.expm(1j*self.spectral_norms[i]* op_time/2 * self.hamiltonian_list[i]))
-            for i in range(1, len(self.spectral_norms)+1):
-                inner.append(linalg.expm(1j*self.spectral_norms[-i]* op_time/2 * self.hamiltonian_list[-i]))
-            fourth_order_op.append(outer)
-            fourth_order_op.append(outer)
-            fourth_order_op.append(inner)             #removed [:]
-            fourth_order_op.append(outer)
-            fourth_order_op.append(outer)
-            return fourth_order_op
-                             
-        else:
-            print("[higher_order_op] Encountered incorrect order (" + str(order) + ") for trotter formula")
-            return 1
                              
     def simulate(self, time, iterations):
         op_time = time/iterations
-        evol_op = self.higher_order(self.order, op_time)
-        Psi = self.initial_state
-        for i in range(0, len(evol_op) * iterations):
-            Psi = evol_op[i % len(evol_op)] @ Psi
-        return Psi
+        steps = computeTrotterTimesteps(len(self.hamiltonian_list), op_time, self.order)
+        psi = self.initial_state
+        for (ix, timestep) in steps:
+            psi = linalg.expm(1j * self.hamiltonian_list[ix] * self.spectral_norms[ix] * timestep) @ psi
+        return psi
 
     def infidelity(self, time, iterations):
         H = []
