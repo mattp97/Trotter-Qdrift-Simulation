@@ -1,3 +1,4 @@
+from asyncore import loop
 from operator import matmul
 import numpy as np
 import matplotlib.pyplot as plt
@@ -548,14 +549,16 @@ class CompositeSim:
             return 0
 
         elif self.partition == "trotter":
-            self.a_norms = self.spectral_norms
+            for i in range(len(self.spectral_norms)):
+                self.a_norms.append([i, self.spectral_norms[i]])
             self.b_norms = []
             self.a_norms = np.array(self.a_norms, dtype='complex')
             self.b_norms = np.array(self.b_norms, dtype='complex')
             return 0
 
         elif self.partition == "qdrift":
-            self.b_norms = self.spectral_norms
+            for i in range(len(self.spectral_norms)):
+                self.b_norms.append([i, self.spectral_norms[i]])
             self.a_norms = []
             self.a_norms = np.array(self.a_norms, dtype='complex')
             self.b_norms = np.array(self.b_norms, dtype='complex')
@@ -635,26 +638,45 @@ class CompositeSim:
             self.nb = samples
         else: pass  #specifying the number of samples having optimized Nb does nothing
 
-        if do_outer_loop == True:
-            inner_loop = np.concatenate(((self.higher_order(time, self.order, self.a_norms)), (self.qdrift_list(self.nb, time))), 0) #creates inner loop
-            outer_loop = (self.higher_order(-1j/iterations, self.order, inner_loop)) #creates the outerloop, -1j so as not to multiply j again
+        if self.partition == 'qdrift': #Lone Qdrift channel
+            loop = self.qdrift_list(self.nb, time)
             final = np.copy(self.initial_state)
-
-            for i in range(len(outer_loop)*iterations):
-                final = linalg.expm(outer_loop[i%len(outer_loop)][1] * self.hamiltonian_list[int((outer_loop[i%len(outer_loop)][0]).real)]) @ final
+            for i in range(self.nb):
+                final = linalg.expm(loop[i][1] * self.hamiltonian_list[int((loop[i][0]).real)]) @ final
         
             self.final_state = final
             return np.copy(self.final_state)
 
-        elif do_outer_loop ==  False:
-            inner_loop = np.concatenate(((self.higher_order(time/iterations, self.order, self.a_norms)), (self.qdrift_list(self.nb, time/iterations))), 0) #creates inner loop (include number of iterations here)
+        elif self.partition == 'trotter': #Lone Trotter channel
+            loop = self.higher_order(time/iterations, self.order, self.a_norms)
             final = np.copy(self.initial_state)
-
-            for i in range(len(inner_loop)*iterations):
-                final = linalg.expm(inner_loop[i%len(inner_loop)][1] * self.hamiltonian_list[int((inner_loop[i%len(inner_loop)][0]).real)]) @ final
-
+            for i in range(len(loop)*iterations):
+                final = linalg.expm(loop[i%len(loop)][1] * self.hamiltonian_list[int((loop[i%len(loop)][0]).real)]) @ final
+        
             self.final_state = final
             return np.copy(self.final_state)
+
+        else: #Composite channels
+            if do_outer_loop == True: #Composite channel with outer loop
+                inner_loop = np.concatenate(((self.higher_order(time, self.order, self.a_norms)), (self.qdrift_list(self.nb, time))), 0) #creates inner loop
+                outer_loop = (self.higher_order(-1j/iterations, self.order, inner_loop)) #creates the outerloop, -1j so as not to multiply j again
+                final = np.copy(self.initial_state)
+
+                for i in range(len(outer_loop)*iterations):
+                    final = linalg.expm(outer_loop[i%len(outer_loop)][1] * self.hamiltonian_list[int((outer_loop[i%len(outer_loop)][0]).real)]) @ final
+        
+                self.final_state = final
+                return np.copy(self.final_state)
+
+            elif do_outer_loop ==  False: #Composite channel with no outer loop
+                inner_loop = np.concatenate(((self.higher_order(time/iterations, self.order, self.a_norms)), (self.qdrift_list(self.nb, time/iterations))), 0) #creates inner loop (include number of iterations here)
+                final = np.copy(self.initial_state)
+
+                for i in range(len(inner_loop)*iterations):
+                    final = linalg.expm(inner_loop[i%len(inner_loop)][1] * self.hamiltonian_list[int((inner_loop[i%len(inner_loop)][0]).real)]) @ final
+
+                self.final_state = final
+                return np.copy(self.final_state)
             
     #Monte-Carlo sample the infidelity, should work for composite channel    
     def sample_channel_inf(self, time, samples, iterations, mcsamples, do_outer_loop): 
@@ -669,7 +691,10 @@ class CompositeSim:
         infidelity = 1- sum(sample_fidelity) / mcsamples 
         return infidelity
 
+    def sim_channel_performance(self, ):
 
+        gate_count = len()
+        return gate_count
 
 
 
