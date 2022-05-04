@@ -373,7 +373,7 @@ class QDriftSimulator:
 #Composite simulation but using a framework with lists of tuples instead of lists of matrices for improved runtime
 #This code adopts the convention that for lists of tuples, indices are stored in [0] and values in [1]
 class CompositeSim:
-    def __init__(self, hamiltonian_list = [], order = 1, partition = "random", rng_seed = 1, nb_optimizer = False, weight_threshold = 0.5, nb = 1, epsilon = 0.001):
+    def __init__(self, hamiltonian_list = [], order = 1, initial_time = 0.1, partition = "random", rng_seed = 1, nb_optimizer = False, weight_threshold = 0.5, nb = 1, epsilon = 0.001):
         self.hamiltonian_list = []
         self.spectral_norms = []
         self.a_norms = [] #contains the partitioned norms, as well as the index of the matrix they come from
@@ -387,7 +387,8 @@ class CompositeSim:
         self.weight_threshold = weight_threshold
 
         self.nb = nb #number of Qdrift channel samples. Useful to define as an attribute if we are choosing whether or not to optimize over it.
-        self.time = 1 #DISCUSS THIS
+        self.time = initial_time 
+        self.gate_count = 0 #Used to keep track of the operators in analyse_sim
 
         # Use the first computational basis state as the initial state until the user specifies.
         self.initial_state = np.zeros((self.hilbert_dim, 1))
@@ -444,7 +445,7 @@ class CompositeSim:
 
     #First order cost functions to optimize over
     def nb_first_order_cost(self, weight): #first order cost, currently computes equation 31 from paper. Weight is a list of all weights with Nb in the last entry
-        cost = 0.0
+        cost = 0.0                         #Error with this function, it may not be possible to optimize Nb with this structure given the expression of the function
         qd_sum = 0.0
         for i in range(len(self.spectral_norms)):
             qd_sum += (1-weight[i]) * self.spectral_norms[i]
@@ -626,26 +627,33 @@ class CompositeSim:
         return np.array(operator_index, dtype = 'complex')
 
     #Simulate and error scaling 
-    def simulate(self, time, samples, iterations, do_outer_loop): 
+    def simulate(self, time, samples, iterations, do_outer_loop, repartition): 
+        if repartition == True: #repartition for each point in time, only necessary for some schemes
+            self.time = time
+            self.partitioning()
+        else: pass
+        
         if self.nb_optimizer == False: 
             self.nb = samples
         else: pass  #specifying the number of samples having optimized Nb does nothing
 
-        if self.partition == 'qdrift': #Lone Qdrift channel
+        if self.partition == 'qdrift' or len(self.a_norms) == 0: #Lone Qdrift channel
             loop = self.qdrift_list(self.nb, time)
             final = np.copy(self.initial_state)
             for i in range(self.nb):
                 final = linalg.expm(loop[i][1] * self.hamiltonian_list[int((loop[i][0]).real)]) @ final
-        
+
+            self.gate_count = len(loop) #added these to each simulation instance to be able to access in the function sim_channel_performance
             self.final_state = final
             return np.copy(self.final_state)
 
-        elif self.partition == 'trotter': #Lone Trotter channel
+        elif self.partition == 'trotter' or len(self.b_norms) == 0: #Lone Trotter channel
             loop = self.higher_order(time/iterations, self.order, self.a_norms)
             final = np.copy(self.initial_state)
             for i in range(len(loop)*iterations):
                 final = linalg.expm(loop[i%len(loop)][1] * self.hamiltonian_list[int((loop[i%len(loop)][0]).real)]) @ final
         
+            self.gate_count = len(loop)*iterations
             self.final_state = final
             return np.copy(self.final_state)
 
@@ -658,6 +666,7 @@ class CompositeSim:
                 for i in range(len(outer_loop)*iterations):
                     final = linalg.expm(outer_loop[i%len(outer_loop)][1] * self.hamiltonian_list[int((outer_loop[i%len(outer_loop)][0]).real)]) @ final
         
+                self.gate_count = len(outer_loop)*iterations
                 self.final_state = final
                 return np.copy(self.final_state)
 
@@ -668,26 +677,43 @@ class CompositeSim:
                 for i in range(len(inner_loop)*iterations):
                     final = linalg.expm(inner_loop[i%len(inner_loop)][1] * self.hamiltonian_list[int((inner_loop[i%len(inner_loop)][0]).real)]) @ final
 
+                self.gate_count = len(inner_loop)*iterations
                 self.final_state = final
                 return np.copy(self.final_state)
             
     #Monte-Carlo sample the infidelity, should work for composite channel    
-    def sample_channel_inf(self, time, samples, iterations, mcsamples, do_outer_loop): 
+    def sample_channel_inf(self, time, samples, iterations, mcsamples, do_outer_loop, repartition): 
         sample_fidelity = []
         H = []
         for i in range(len(self.spectral_norms)):
             H.append(self.hamiltonian_list[i] * self.spectral_norms[i])
         for s in range(mcsamples):
-            sim_state = self.simulate(time, samples, iterations, do_outer_loop)
+            sim_state = self.simulate(time, samples, iterations, do_outer_loop, repartition)
             good_state = np.dot(linalg.expm(1j * sum(H) * time), self.initial_state)
             sample_fidelity.append((np.abs(np.dot(good_state.conj().T, sim_state)))**2)
         infidelity = 1- sum(sample_fidelity) / mcsamples 
-        return infidelity
+        return infidelity 
 
-    def sim_channel_performance(self, ):
+    #To analyse the number of gates required to meet a certain error threshold 
+    def sim_channel_performance(self, time, samples, iterations, mcsamples, do_outer_loop, repartition):
+        good_inf = []
+        bad_inf = []
+        infidelity = self.sample_channel_inf(time, samples, iterations, mcsamples, do_outer_loop, repartition)
+        while len(good_inf) < 5: #arbitrarily choosing 5 "good points" to be sure we have not met error threshold by monte-carlo randomness
+            if infidelity > self.epsilon:
+                bad_inf.append([self.gate_count, infidelity]) #self.gate_count is updated by the function simulate :)
+                iterations +=1
+                self.sample_channel_inf(time, samples, iterations, mcsamples, do_outer_loop, repartition)
+            else: 
+                good_inf.append([self.gate_count, infidelity])
+                iterations +=1
+                self.sample_channel_inf(time, samples, iterations, mcsamples, do_outer_loop, repartition)
 
-        gate_count = len()
-        return gate_count
+        good_inf = np.array(good_inf)
+        bad_inf = np.array(bad_inf)
+        gate_data = np.concatenate((bad_inf, good_inf), 0)
+        #more to add, we want a linear fit of these points and then a POI calculation, which is what we want to report
+        return gate_data
 
 
 
