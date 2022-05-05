@@ -59,7 +59,7 @@ def computeTrotterTimesteps(numTerms, simTime, trotterOrder = 1):
 # - iterations: "r" parameter. This object will handle repeating the channel r times and dividing 
 #               overall simulation into t/r chunks.
 # - order: The trotter order, represented as "2k" in literature. 
-# May 05 : 
+
 class TrotterSim:
     def __init__(self, hamiltonian_list = [], order = 1):
         self.hamiltonian_list = []
@@ -513,11 +513,9 @@ class CompositeSim:
         if repartition == True: #repartition for each point in time, only necessary for some schemes
             self.time = time
             self.partitioning()
-        else: pass
         
         if self.nb_optimizer == False: 
-            self.nb = samples
-        else: pass  #specifying the number of samples having optimized Nb does nothing
+            self.nb = samples  #specifying the number of samples having optimized Nb does nothing
 
         if self.partition == 'qdrift' or len(self.a_norms) == 0: #Lone Qdrift channel
             loop = self.qdrift_list(self.nb, time)
