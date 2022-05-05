@@ -354,10 +354,12 @@ class CompositeSim:
     #partitioning method to execute the partitioning method of the users choice, random likely not used in practice
     def partitioning(self):
         if self.partition == "prob":
-            gamma = 2*5**(self.order -1)
+            if self.order > 1: k = self.order/2
+            else: return "partition not defined for this order"
+            gamma = 2*5**(k -1)
             lamb = sum(self.spectral_norms)
-            chi = (lamb/len(self.spectral_norms)) * ((self.nb * (self.epsilon/(lamb * self.time))**(1-1/(2*self.order)) * 
-            ((2*self.order + gamma)/(2*self.order +1))**(1/(2*self.order)) * gamma**(1/(2*self.order)) / 2**(1-1/self.order))**(1/2) -1) #discrepancy with order and k
+            chi = (lamb/len(self.spectral_norms)) * ((self.nb * (self.epsilon/(lamb * self.time))**(1-1/(2*k)) * 
+            ((2*k + gamma)/(2*k +1))**(1/(2*k)) * gamma**(1/(2*k)) / 2**(1-1/k))**(1/2) -1) 
             
             for i in range(len(self.spectral_norms)):
                 num = np.random.random()
