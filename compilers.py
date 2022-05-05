@@ -64,11 +64,14 @@ class TrotterSim:
     def __init__(self, hamiltonian_list = [], order = 1):
         self.hamiltonian_list = []
         self.spectral_norms = []
-        self.hilbert_dim = hamiltonian_list[0].shape[0]
         self.order = order
+        self.gate_count = 0
 
         # Use the first computational basis state as the initial state until the user specifies.
-        self.initial_state = np.zeros((self.hilbert_dim, 1))
+        if len(hamiltonian_list) == 0:
+            self.initial_state = np.zeros((1,1))
+        else:
+            self.initial_state = np.zeros((hamiltonian_list[0].shape[0]))
         self.initial_state[0] = 1
         self.final_state = np.copy(self.initial_state)
 
@@ -87,40 +90,31 @@ class TrotterSim:
             self.hamiltonian_list.append(h / temp_norm)
         return 0
 
+    # Assumes terms are already normalized
+    def set_hamiltonian(self, mat_list = [], norm_list = []):
+        if len(mat_list) != len(mat_list):
+            print("[Trott - set_hamiltonian] Incorrect length arrays")
+            return 1
+        self.hamiltonian_list = mat_list
+        self.spectral_norms = norm_list
+
     # Do some sanity checking before storing. Check if input is proper dimensions and an actual
     # quantum state.
     def set_initial_state(self, psi_init):
-        global FLOATING_POINT_PRECISION
-        if type(psi_init) != type(self.initial_state):
-            print("[set_initial_state]: input type not numpy ndarray")
-            return 1
-
-        if psi_init.size != self.initial_state.size:
-            print("[set_initial_state]: input size not matching")
-            return 1
-
-        # check that the frobenius aka l2 norm is 1
-        if np.linalg.norm(psi_init, ord = 2) - 1.0 > FLOATING_POINT_PRECISION:
-            print("[set_initial_state]: input is not properly normalized")
-            return 1
-
-        # check that each dimension has magnitude between 0 and 1
-        for ix in range(len(psi_init)):
-            if np.abs(psi_init[ix]) > 1.0:
-                print("[set_initial_state]: too big of a dimension in vector")
-                return 1
-
-        # Should be good to go now
         self.initial_state = psi_init
-        return 0
 
                              
     def simulate(self, time, iterations):
+        self.gate_count = 0
+        if len(self.hamiltonian_list) == 0:
+            return np.copy(self.initial_state)
+
         op_time = time/iterations
         steps = computeTrotterTimesteps(len(self.hamiltonian_list), op_time, self.order)
         psi = self.initial_state
         for (ix, timestep) in steps:
             psi = linalg.expm(1j * self.hamiltonian_list[ix] * self.spectral_norms[ix] * timestep) @ psi
+            self.gate_count += 1
         return psi
 
     def infidelity(self, time, iterations):
@@ -150,12 +144,15 @@ class QDriftSimulator:
     def __init__(self, hamiltonian_list = [], rng_seed = 1):
         self.hamiltonian_list = []
         self.spectral_norms = []
-        self.hilbert_dim = hamiltonian_list[0].shape[0]
         self.rng_seed = rng_seed
+        self.gate_count = 0
 
         # Use the first computational basis state as the initial state until the user specifies.
-        self.initial_state = np.zeros((self.hilbert_dim, 1))
-        self.initial_state[0] = 1.
+        if len(hamiltonian_list) == 0:
+            self.initial_state = np.zeros((1,1))
+        else:
+            self.initial_state = np.zeros((hamiltonian_list[0].shape[0]))
+        self.initial_state[0] = 1
         self.final_state = np.copy(self.initial_state)
 
         self.prep_hamiltonian_lists(hamiltonian_list)
@@ -176,29 +173,15 @@ class QDriftSimulator:
     # Do some sanity checking before storing. Check if input is proper dimensions and an actual
     # quantum state.
     def set_initial_state(self, psi_init):
-        global FLOATING_POINT_PRECISION
-        if type(psi_init) != type(self.initial_state):
-            print("[set_initial_state]: input type not numpy ndarray")
-            return 1
-
-        if psi_init.size != self.initial_state.size:
-            print("[set_initial_state]: input size not matching")
-            return 1
-
-        # check that the frobenius aka l2 norm is 1
-        if np.linalg.norm(psi_init, ord='fro') - 1.0 > FLOATING_POINT_PRECISION:
-            print("[set_initial_state]: input is not properly normalized")
-            return 1
-
-        # check that each dimension has magnitude between 0 and 1
-        for ix in range(len(psi_init)):
-            if np.abs(psi_init[ix]) > 1.0:
-                print("[set_initial_state]: too big of a dimension in vector")
-                return 1
-
-        # Should be good to go now
         self.initial_state = psi_init
-        return 0
+
+    # Assumes terms are already normalized
+    def set_hamiltonian(self, mat_list = [], norm_list = []):
+        if len(mat_list) != len(mat_list):
+            print("[QD - set_hamiltonian] Incorrect length arrays")
+            return 1
+        self.hamiltonian_list = mat_list
+        self.spectral_norms = norm_list
 
     # RETURNS A 0 BASED INDEX TO BE USED IN CODE!!
     def draw_hamiltonian_sample(self):
@@ -212,7 +195,12 @@ class QDriftSimulator:
         return len(self.spectral_norms) - 1
 
     def simulate(self, time, samples):
-        evol_op = np.identity(self.hilbert_dim)
+        self.gate_count = 0
+        evol_op = np.identity(len(self.initial_state))
+
+        if len(self.hamiltonian_list) == 0:
+            return np.copy(self.initial_state)
+
         tau = time * np.sum(self.spectral_norms) / (samples * 1.0)
         final = np.copy(self.initial_state)
         for n in range(samples):
@@ -220,6 +208,7 @@ class QDriftSimulator:
             exp_h = linalg.expm(1.j * tau * self.hamiltonian_list[ix])
             final = exp_h @ final
         self.final_state = final
+        self.gate_count = samples
         return np.copy(self.final_state)
 
     def sample_channel_inf(self, time, samples, mcsamples):
@@ -255,18 +244,21 @@ class QDriftSimulator:
 #Composite simulation but using a framework with lists of tuples instead of lists of matrices for improved runtime
 #This code adopts the convention that for lists of tuples, indices are stored in [0] and values in [1]
 class CompositeSim:
-    def __init__(self, hamiltonian_list = [], order = 1, initial_time = 0.1, partition = "random", rng_seed = 1, nb_optimizer = False, weight_threshold = 0.5, nb = 1, epsilon = 0.001):
+    def __init__(self, hamiltonian_list = [], inner_order = 1, outter_order = 1, initial_time = 0.1, partition = "random", rng_seed = 1, nb_optimizer = False, weight_threshold = 0.5, nb = 1, epsilon = 0.001):
         self.hamiltonian_list = []
         self.spectral_norms = []
         self.a_norms = [] #contains the partitioned norms, as well as the index of the matrix they come from
         self.b_norms = []
         self.hilbert_dim = hamiltonian_list[0].shape[0]
         self.rng_seed = rng_seed
-        self.order = order #REDEFINE THIS IN TROTTER!!!!
+        self.outter_order = outter_order #REDEFINE THIS IN TROTTER!!!!
         self.partition = partition
         self.nb_optimizer = nb_optimizer
         self.epsilon = epsilon #simulation error
         self.weight_threshold = weight_threshold
+
+        self.qdrift_sim = QDriftSimulator()
+        self.trotter_sim = TrotterSim(order = inner_order)
 
         self.nb = nb #number of Qdrift channel samples. Useful to define as an attribute if we are choosing whether or not to optimize over it.
         self.time = initial_time 
@@ -280,6 +272,7 @@ class CompositeSim:
         self.prep_hamiltonian_lists(hamiltonian_list) #do we want this done before or after the partitioning?
         np.random.seed(self.rng_seed)
         self.partitioning() #note error was raised because partition() is a built in python method
+        self.set_simulators()
         
         print("There are " + str(len(self.a_norms)) + " terms in Trotter") #make the partition known
         print("There are " + str(len(self.b_norms)) + " terms in QDrift")
@@ -324,6 +317,24 @@ class CompositeSim:
         # Should be good to go now
         self.initial_state = psi_init
         return 0
+
+    # Prep simulators with terms, isolated as function for reusability in partitioning
+    def set_simulators(self):
+        qdrift_terms, qdrift_norms = [] , []
+        trott_terms, trott_norms = [] , []
+        for ix in range(len(self.a_norms)):
+            index = int(self.a_norms[ix][0].real)
+            norm = self.a_norms[ix][1]
+            trott_terms.append(self.hamiltonian_list[index])
+            trott_norms.append(norm)
+        
+        for ix in range(len(self.b_norms)):
+            index = int(self.b_norms[ix][0].real)
+            norm = self.b_norms[ix][1]
+            qdrift_terms.append(self.hamiltonian_list[index])
+            qdrift_norms.append(norm)
+        self.qdrift_sim.set_hamiltonian(qdrift_terms, qdrift_norms)
+        self.trotter_sim.set_hamiltonian(trott_terms, trott_norms)
 
     #First order cost functions to optimize over
     def nb_first_order_cost(self, weight): #first order cost, currently computes equation 31 from paper. Weight is a list of all weights with Nb in the last entry
@@ -446,70 +457,6 @@ class CompositeSim:
             print("Invalid input for attribute 'partition' ")
             return 1
 
-    #Trotter functions -- modified from the Trotter sim to also take the list of tuples containing the indices of operators and their respective norms to symmetrize as an input
-    def first_order(self, op_time, norms_list):
-        ops_index = []
-        for i in range(len(norms_list)):
-            ops_index.append([norms_list[i][0], 1j * norms_list[i][1] * op_time])
-        return np.array(ops_index, dtype = 'complex')
-                            
-    def second_order(self, op_time, norms_list):
-        ops_index = []
-        for i in range(len(norms_list)):
-            ops_index.append([norms_list[i][0], 1j * norms_list[i][1] * op_time/2])
-        for i in range(1, len(norms_list)+1):
-            ops_index.append([norms_list[-i][0], 1j * norms_list[-i][1] * op_time/2])
-        return np.array(ops_index, dtype = 'complex')
-
-    def higher_order(self, op_time, order, norms_list):
-        if type(order) != type(2):
-            print("[higher_order_op] provided input order (" + str(order) + ") is not an integer")
-            return 1
-        elif order == 1:
-            return self.first_order(op_time, norms_list)
-        elif order == 2:
-            return self.second_order(op_time, norms_list)
-        elif order == 4:
-            time_const = 1.0/(4 - 4**(1.0/(order - 1)))
-            fourth_order_op = []
-            #for i in range(1, order/2):
-            outer = []
-            inner = []
-            outer.append(self.second_order(op_time))
-            for i in range(len(self.spectral_norms)):
-                inner.append(linalg.expm(1j*self.spectral_norms[i]* op_time/2 * self.hamiltonian_list[i]))
-            for i in range(1, len(self.spectral_norms)+1):
-                inner.append(linalg.expm(1j*self.spectral_norms[-i]* op_time/2 * self.hamiltonian_list[-i]))
-            fourth_order_op.append(outer)
-            fourth_order_op.append(outer)
-            fourth_order_op.append(inner)             #removed [:]
-            fourth_order_op.append(outer)
-            fourth_order_op.append(outer)
-            return fourth_order_op
-                             
-        else:
-            print("[higher_order_op] Encountered incorrect order (" + str(order) + ") for trotter formula")
-            return 1
-            
-    #QDrift functions, [0] and [1] show up based on where indices[0] and norms[1] are stored in the tuple
-    def draw_hamiltonian_sample(self):
-        sample = np.random.random()
-        tot = 0.
-        lamb = sum(self.b_norms)[1]
-        for ix in range(len(self.b_norms)):
-            if sample > tot and sample < tot + self.b_norms[ix][1] / lamb:
-                return ix
-            tot += self.b_norms[ix][1] / lamb
-        return len(self.b_norms) - 1 #why is this here again?
-
-    def qdrift_list(self, samples, time):
-        operator_index = []
-        tau = time * (sum(self.b_norms)[1]) / (samples * 1.0)
-        for n in range(samples):
-            ix = self.draw_hamiltonian_sample()
-            operator_index.append([self.b_norms[ix][0], 1j * tau])
-        return np.array(operator_index, dtype = 'complex')
-
     #Simulate and error scaling 
     def simulate(self, time, samples, iterations, do_outer_loop, repartition): 
         if repartition == True: #repartition for each point in time, only necessary for some schemes
@@ -519,49 +466,21 @@ class CompositeSim:
         if self.nb_optimizer == False: 
             self.nb = samples  #specifying the number of samples having optimized Nb does nothing
 
-        if self.partition == 'qdrift' or len(self.a_norms) == 0: #Lone Qdrift channel
-            loop = self.qdrift_list(self.nb, time)
-            final = np.copy(self.initial_state)
-            for i in range(self.nb):
-                final = linalg.expm(loop[i][1] * self.hamiltonian_list[int((loop[i][0]).real)]) @ final
-
-            self.gate_count = len(loop) #added these to each simulation instance to be able to access in the function sim_channel_performance
-            self.final_state = final
-            return np.copy(self.final_state)
-
-        elif self.partition == 'trotter' or len(self.b_norms) == 0: #Lone Trotter channel
-            loop = self.higher_order(time/iterations, self.order, self.a_norms)
-            final = np.copy(self.initial_state)
-            for i in range(len(loop)*iterations):
-                final = linalg.expm(loop[i%len(loop)][1] * self.hamiltonian_list[int((loop[i%len(loop)][0]).real)]) @ final
+        self.gate_count = 0
+        channel_visits = computeTrotterTimesteps(2, time / (1. * iterations), self.outter_order)
+        current_state = np.copy(self.initial_state)
+        for i in range(iterations):
+            for (ix, sim_time) in channel_visits:
+                if ix == 0:
+                    self.trotter_sim.set_initial_state(current_state)
+                    current_state = self.trotter_sim.simulate(sim_time, 1)
+                if ix == 1:
+                    self.qdrift_sim.set_initial_state(current_state)
+                    current_state = self.qdrift_sim.simulate(sim_time, samples)
+                self.gate_count += self.trotter_sim.gate_count
+                self.gate_count += self.qdrift_sim.gate_count
         
-            self.gate_count = len(loop)*iterations
-            self.final_state = final
-            return np.copy(self.final_state)
-
-        else: #Composite channels
-            if do_outer_loop == True: #Composite channel with outer loop
-                inner_loop = np.concatenate(((self.higher_order(time, self.order, self.a_norms)), (self.qdrift_list(self.nb, time))), 0) #creates inner loop
-                outer_loop = (self.higher_order(-1j/iterations, self.order, inner_loop)) #creates the outerloop, -1j so as not to multiply j again
-                final = np.copy(self.initial_state)
-
-                for i in range(len(outer_loop)*iterations):
-                    final = linalg.expm(outer_loop[i%len(outer_loop)][1] * self.hamiltonian_list[int((outer_loop[i%len(outer_loop)][0]).real)]) @ final
-        
-                self.gate_count = len(outer_loop)*iterations
-                self.final_state = final
-                return np.copy(self.final_state)
-
-            elif do_outer_loop ==  False: #Composite channel with no outer loop
-                inner_loop = np.concatenate(((self.higher_order(time/iterations, self.order, self.a_norms)), (self.qdrift_list(self.nb, time/iterations))), 0) #creates inner loop (include number of iterations here)
-                final = np.copy(self.initial_state)
-
-                for i in range(len(inner_loop)*iterations):
-                    final = linalg.expm(inner_loop[i%len(inner_loop)][1] * self.hamiltonian_list[int((inner_loop[i%len(inner_loop)][0]).real)]) @ final
-
-                self.gate_count = len(inner_loop)*iterations
-                self.final_state = final
-                return np.copy(self.final_state)
+        return current_state
             
     #Monte-Carlo sample the infidelity, should work for composite channel    
     def sample_channel_inf(self, time, samples, iterations, mcsamples, do_outer_loop, repartition): #RNGSEED DOES NOT SEEM TO WORK HERE???
@@ -595,171 +514,3 @@ class CompositeSim:
         
         poi = np.interp([self.epsilon], list(gate_data[:,1]), list(gate_data[:,0])) #interpolates where the error threshold is saturated
         return poi
-
-
-# Create a simple evolution operator, compare the difference with known result. Beware floating pt
-# errors
-# H = sigma_X
-def test_first_order_op():
-    sigma_x = np.array([[0,1],[1,0]])
-    sim = TrotterSim([sigma_x], order=1)
-
-def test_second_order_op():
-    sigma_x = np.array([[0, 1], [1, 0]])
-    sim = TrotterSim([sigma_x], order=2)
-
-def test_higher_order_op():
-    sigma_x = np.array([[0,1], [1,0]])
-    sim = TrotterSim([sigma_x], order=6)
-
-def test_trotter():
-    hilb_dim = 16
-    X = np.array([[0, 1],[1, 0]], dtype='complex')
-    Y = np.array([[0, -1j], [1j, 0]], dtype='complex')
-    Z = np.array([[1, 0], [0, -1]], dtype='complex')
-    I = np.array([[1, 0], [0, 1]], dtype='complex')
-    
-    # h1 = np.random.random() * np.kron(X, X)
-    # h2 = np.random.random() * np.kron(X, Y)
-    # h3 = np.random.random() * np.kron(X, Z)
-    # h4 = np.random.random() * np.kron(Y, Z)
-    # h5 = np.random.random() * np.kron(Y, Y)
-    # h1 = np.random.random() * np.kron(X, X)
-
-    h1 = np.random.randn(hilb_dim, hilb_dim) + 1j * np.random.randn(hilb_dim, hilb_dim)
-    h1 += h1.conjugate().T
-    h2 = np.random.randn(hilb_dim, hilb_dim) + 1j * np.random.randn(hilb_dim, hilb_dim)
-    h2 += h1.conjugate().T
-    h3 = np.random.randn(hilb_dim, hilb_dim) + 1j * np.random.randn(hilb_dim, hilb_dim)
-    h3 += h1.conjugate().T
-    h4 = np.random.randn(hilb_dim, hilb_dim) + 1j * np.random.randn(hilb_dim, hilb_dim)
-    h4 += h1.conjugate().T
-    h5 = np.random.randn(hilb_dim, hilb_dim) + 1j * np.random.randn(hilb_dim, hilb_dim)
-    h5 += h1.conjugate().T
-    h6 = np.random.randn(hilb_dim, hilb_dim) + 1j * np.random.randn(hilb_dim, hilb_dim)
-    h6 += h1.conjugate().T
-
-    h = [h1, h2, h3, h4, h5, h6]
-    input_state = np.array([1] + [0] * (hilb_dim - 1), dtype='complex').flatten()
-
-    sim1 = TrotterSim(h, order = 1)
-    sim1.set_initial_state(input_state)
-    sim2 = TrotterSim(h, order = 2)
-    sim2.set_initial_state(input_state)
-    sim4 = TrotterSim(h, order = 4)
-    sim4.set_initial_state(input_state)
-
-    iterations = 2**16
-    t_list = np.logspace(-4, -1, 100)
-    inf1 = []
-    inf2 = []
-    inf4 = []
-    for t in t_list:
-        inf1.append(sim1.infidelity(t, iterations))
-        inf2.append(sim2.infidelity(t, iterations))
-        inf4.append(sim4.infidelity(t, iterations))
-    log_inf1 = np.log10(inf1).flatten()
-    log_inf2 = np.log10(inf2).flatten()
-    log_inf4 = np.log10(inf4).flatten()
-    log_t = np.log10(t_list)
-
-    # Note we use the same t scale for all orders
-    fig, axs = plt.subplots(3, sharex = True)
-    fig.suptitle("Log-log t vs infidelity for Trotter formula orders 1, 2, and 4")
-
-    # Order 1
-    axs[0].set_title("Order 1")
-    axs[0].plot(log_t, log_inf1, 'bo-')
-    axs[0].set(ylabel='log(infidelity)')
-
-    fit_points = 50 # declare the starting point to fit in the data
-    p = np.polyfit(log_t[0 : fit_points], log_inf1[0 : fit_points], 1)
-    f = np.poly1d(p)
-
-    t_new = np.linspace(log_t[fit_points], log_t[-1], 50)
-    y_new = f(t_new)
-
-    data = symbols("t")
-    poly = sum(S("{:6.2f}".format(v)) * data**i for i, v in enumerate(p[::-1]))
-    eq_latex = printing.latex(poly)
-
-    axs[0].plot(t_new, y_new, 'r--', label = "${}$".format(eq_latex))
-    axs[0].legend(fontsize = "large")
-
-    # Order 2
-    axs[1].set_title("Order 2")
-    axs[1].plot(log_t, log_inf2, 'bo-')
-    axs[1].set(ylabel='log(infidelity)')
-
-    fit_points = 50 # declare the starting point to fit in the data
-    p = np.polyfit(log_t[0 : fit_points], log_inf2[0 : fit_points], 1)
-    f = np.poly1d(p)
-
-    t_new = np.linspace(log_t[fit_points], log_t[-1], 50)
-    y_new = f(t_new)
-
-    data = symbols("t")
-    poly = sum(S("{:6.2f}".format(v)) * data**i for i, v in enumerate(p[::-1]))
-    eq_latex = printing.latex(poly)
-
-    axs[1].plot(t_new, y_new, 'r--', label = "${}$".format(eq_latex))
-    axs[1].legend(fontsize = "large")
-
-    # Order 4
-    axs[2].set_title("Order 4")
-    axs[2].plot(log_t, log_inf4, 'bo-')
-    axs[2].set(ylabel='log(infidelity)')
-
-    fit_points = 50 # declare the starting point to fit in the data
-    p = np.polyfit(log_t[0 : fit_points], log_inf4[0 : fit_points], 1)
-    f = np.poly1d(p)
-
-    t_new = np.linspace(log_t[fit_points], log_t[-1], 50)
-    y_new = f(t_new)
-
-    data = symbols("t")
-    poly = sum(S("{:6.2f}".format(v)) * data**i for i, v in enumerate(p[::-1]))
-    eq_latex = printing.latex(poly)
-
-    axs[2].plot(t_new, y_new, 'r--', label = "${}$".format(eq_latex))
-    axs[2].legend(fontsize = "large")
-    plt.show()
-
-
-def test_qdrift():
-    time = 0.3
-    bigN = 500
-    X = np.array([[0, 1],[1, 0]], dtype='complex')
-    Y = np.array([[0, -1j], [1j, 0]], dtype='complex')
-    Z = np.array([[1, 0], [0, -1]], dtype='complex')
-    I = np.array([[1, 0], [0, 1]], dtype='complex')
-    
-    h1 = np.kron(X, X)
-    h2 = np.kron(X, Y)
-    h3 = np.kron(X, Z)
-    h4 = np.kron(Y, Z)
-    h5 = np.kron(Y, Y)
-    h = [h1, h2, h3, h4, h5]
-
-    input_state = np.array([1, 0, 0, 0]).reshape((4,1))
-    qdsim = QDriftSimulator(h)
-    qdsim.set_initial_state(input_state)
-
-    exact_op = linalg.expm(1j * sum(h) * time)
-    expected = np.dot(exact_op, input_state)
-    
-    fidelities = []
-    num_samps = 50
-    for ix in range(50):
-        qd_out = qdsim.simulate(time, bigN)
-        tmp = np.abs(np.dot(expected.conj().T, qd_out))**2
-        fidelities.append(tmp)
-    print("[test_qd] empirical infidelity: ", 1 - sum(fidelities) / (1. * num_samps))
-
-test = False
-if test:
-    test_first_order_op()
-    test_second_order_op()
-    test_higher_order_op()
-    test_trotter()
-    # test_qdrift()
