@@ -682,7 +682,7 @@ class CompositeSim:
                 return np.copy(self.final_state)
             
     #Monte-Carlo sample the infidelity, should work for composite channel    
-    def sample_channel_inf(self, time, samples, iterations, mcsamples, do_outer_loop, repartition): 
+    def sample_channel_inf(self, time, samples, iterations, mcsamples, do_outer_loop, repartition): #RNGSEED DOES NOT SEEM TO WORK HERE???
         sample_fidelity = []
         H = []
         for i in range(len(self.spectral_norms)):
@@ -692,29 +692,27 @@ class CompositeSim:
             good_state = np.dot(linalg.expm(1j * sum(H) * time), self.initial_state)
             sample_fidelity.append((np.abs(np.dot(good_state.conj().T, sim_state)))**2)
         infidelity = 1- sum(sample_fidelity) / mcsamples 
-        return infidelity 
+        return infidelity #this is of type array for some reason?
 
     #To analyse the number of gates required to meet a certain error threshold 
     def sim_channel_performance(self, time, samples, iterations, mcsamples, do_outer_loop, repartition):
         good_inf = []
         bad_inf = []
-        infidelity = self.sample_channel_inf(time, samples, iterations, mcsamples, do_outer_loop, repartition)
         while len(good_inf) < 5: #arbitrarily choosing 5 "good points" to be sure we have not met error threshold by monte-carlo randomness
+            infidelity = self.sample_channel_inf(time, samples, iterations, mcsamples, do_outer_loop, repartition)
             if infidelity > self.epsilon:
-                bad_inf.append([self.gate_count, infidelity]) #self.gate_count is updated by the function simulate :)
+                bad_inf.append([self.gate_count, float(infidelity)]) #self.gate_count is updated by the function simulate :)
                 iterations +=1
-                self.sample_channel_inf(time, samples, iterations, mcsamples, do_outer_loop, repartition)
             else: 
-                good_inf.append([self.gate_count, infidelity])
+                good_inf.append([self.gate_count, float(infidelity)]) #dimensionality/ type for infidelity should be fixed and this 'float' can be removed
                 iterations +=1
-                self.sample_channel_inf(time, samples, iterations, mcsamples, do_outer_loop, repartition)
 
         good_inf = np.array(good_inf)
         bad_inf = np.array(bad_inf)
         gate_data = np.concatenate((bad_inf, good_inf), 0)
-        #more to add, we want a linear fit of these points and then a POI calculation, which is what we want to report
-        return gate_data
-
+        
+        poi = np.interp([self.epsilon], list(gate_data[:,1]), list(gate_data[:,0])) #interpolates where the error threshold is saturated
+        return poi
 
 
 # Create a simple evolution operator, compare the difference with known result. Beware floating pt
