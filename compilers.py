@@ -66,6 +66,7 @@ class TrotterSim:
         self.spectral_norms = []
         self.hilbert_dim = hamiltonian_list[0].shape[0]
         self.order = order
+        self.cost = 0
 
         # Use the first computational basis state as the initial state until the user specifies.
         self.initial_state = np.zeros((self.hilbert_dim, 1))
@@ -116,11 +117,16 @@ class TrotterSim:
 
                              
     def simulate(self, time, iterations):
+        self.cost = 0
+        if len(self.hamiltonian_list) == 0:
+            return np.copy(self.initial_state)
+            
         op_time = time/iterations
         steps = computeTrotterTimesteps(len(self.hamiltonian_list), op_time, self.order)
         psi = self.initial_state
         for (ix, timestep) in steps:
             psi = linalg.expm(1j * self.hamiltonian_list[ix] * self.spectral_norms[ix] * timestep) @ psi
+            self.cost += 1
         return psi
 
     def infidelity(self, time, iterations):
@@ -152,6 +158,7 @@ class QDriftSimulator:
         self.spectral_norms = []
         self.hilbert_dim = hamiltonian_list[0].shape[0]
         self.rng_seed = rng_seed
+        self.cost = 0
 
         # Use the first computational basis state as the initial state until the user specifies.
         self.initial_state = np.zeros((self.hilbert_dim, 1))
@@ -200,6 +207,14 @@ class QDriftSimulator:
         self.initial_state = psi_init
         return 0
 
+    # Assumes terms are already normalized
+    def set_hamiltonian(self, mat_list = [], norm_list = []):
+        if len(mat_list) != len(mat_list):
+            print("[QD - set_hamiltonian] Incorrect length arrays")
+            return 1
+        self.hamiltonian_list = mat_list
+        self.spectral_norms = norm_list
+
     # RETURNS A 0 BASED INDEX TO BE USED IN CODE!!
     def draw_hamiltonian_sample(self):
         sample = np.random.random()
@@ -212,7 +227,12 @@ class QDriftSimulator:
         return len(self.spectral_norms) - 1
 
     def simulate(self, time, samples):
+        self.cost = 0
         evol_op = np.identity(self.hilbert_dim)
+
+        if len(self.hamiltonian_list) == 0:
+            return np.copy(self.initial_state)
+
         tau = time * np.sum(self.spectral_norms) / (samples * 1.0)
         final = np.copy(self.initial_state)
         for n in range(samples):
@@ -220,6 +240,7 @@ class QDriftSimulator:
             exp_h = linalg.expm(1.j * tau * self.hamiltonian_list[ix])
             final = exp_h @ final
         self.final_state = final
+        self.cost = samples
         return np.copy(self.final_state)
 
     def sample_channel_inf(self, time, samples, mcsamples):
@@ -255,7 +276,7 @@ class QDriftSimulator:
 #Composite simulation but using a framework with lists of tuples instead of lists of matrices for improved runtime
 #This code adopts the convention that for lists of tuples, indices are stored in [0] and values in [1]
 class CompositeSim:
-    def __init__(self, hamiltonian_list = [], order = 1, initial_time = 0.1, partition = "random", rng_seed = 1, nb_optimizer = False, weight_threshold = 0.5, nb = 1, epsilon = 0.001):
+    def __init__(self, hamiltonian_list = [], inner_order = 1, order = 1, initial_time = 0.1, partition = "random", rng_seed = 1, nb_optimizer = False, weight_threshold = 0.5, nb = 1, epsilon = 0.001):
         self.hamiltonian_list = []
         self.spectral_norms = []
         self.a_norms = [] #contains the partitioned norms, as well as the index of the matrix they come from
@@ -267,6 +288,9 @@ class CompositeSim:
         self.nb_optimizer = nb_optimizer
         self.epsilon = epsilon #simulation error
         self.weight_threshold = weight_threshold
+
+        self.qdrift_sim = QDriftSimulator()
+        self.trotter_sim = TrotterSim(order = inner_order)
 
         self.nb = nb #number of Qdrift channel samples. Useful to define as an attribute if we are choosing whether or not to optimize over it.
         self.time = initial_time 
