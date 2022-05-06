@@ -273,7 +273,7 @@ class CompositeSim:
         np.random.seed(self.rng_seed)
         self.partitioning() #note error was raised because partition() is a built in python method
         self.set_simulators()
-        
+
         print("There are " + str(len(self.a_norms)) + " terms in Trotter") #make the partition known
         print("There are " + str(len(self.b_norms)) + " terms in QDrift")
         if nb_optimizer == True:
@@ -462,6 +462,7 @@ class CompositeSim:
         if repartition == True: #repartition for each point in time, only necessary for some schemes
             self.time = time
             self.partitioning()
+            self.set_simulators()
         
         if self.nb_optimizer == False: 
             self.nb = samples  #specifying the number of samples having optimized Nb does nothing
