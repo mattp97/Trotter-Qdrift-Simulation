@@ -275,7 +275,7 @@ class CompositeSim:
         np.random.seed(self.rng_seed)
         self.partitioning() #note error was raised because partition() is a built in python method
         self.set_simulators()
-        
+
         print("There are " + str(len(self.a_norms)) + " terms in Trotter") #make the partition known
         print("There are " + str(len(self.b_norms)) + " terms in QDrift")
         if nb_optimizer == True:
@@ -473,7 +473,8 @@ class CompositeSim:
         if self.repartition == True: #repartition for each point in time, only necessary for some schemes
             self.time = time
             self.partitioning()
-
+            self.set_simulators()
+        
         self.gate_count = 0
         channel_visits = computeTrotterTimesteps(2, time / (1. * iterations), self.outter_order)
         current_state = np.copy(self.initial_state)
