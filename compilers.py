@@ -244,7 +244,7 @@ class QDriftSimulator:
 #Composite simulation but using a framework with lists of tuples instead of lists of matrices for improved runtime
 #This code adopts the convention that for lists of tuples, indices are stored in [0] and values in [1]
 class CompositeSim:
-    def __init__(self, hamiltonian_list = [], inner_order = 1, outter_order = 1, initial_time = 0.1, partition = "random", rng_seed = 1, nb_optimizer = False, weight_threshold = 0.5, nb = 1, epsilon = 0.001):
+    def __init__(self, hamiltonian_list = [], inner_order = 1, outter_order = 1, initial_time = 0.1, partition = "random", repartition = False, rng_seed = 1, nb_optimizer = False, weight_threshold = 0.5, nb = 1, epsilon = 0.001):
         self.hamiltonian_list = []
         self.spectral_norms = []
         self.a_norms = [] #contains the partitioned norms, as well as the index of the matrix they come from
@@ -252,7 +252,9 @@ class CompositeSim:
         self.hilbert_dim = hamiltonian_list[0].shape[0]
         self.rng_seed = rng_seed
         self.outter_order = outter_order #REDEFINE THIS IN TROTTER!!!!
+        self.inner_order = inner_order
         self.partition = partition
+        self.repartition = repartition
         self.nb_optimizer = nb_optimizer
         self.epsilon = epsilon #simulation error
         self.weight_threshold = weight_threshold
@@ -365,20 +367,26 @@ class CompositeSim:
     #partitioning method to execute the partitioning method of the users choice, random likely not used in practice
     def partitioning(self):
         if self.partition == "prob":
-            if self.order > 1: k = self.order/2
+            if self.inner_order > 1: k = self.inner_order/2
             else: return "partition not defined for this order"
-            gamma = 2*5**(k -1)
+            if self.repartition == False:
+                print("this method requires repartitioning at each timestep")
+                return 1
+            upsilon = 2*(5**(k -1))
             lamb = sum(self.spectral_norms)
-            chi = (lamb/len(self.spectral_norms)) * ((self.nb * (self.epsilon/(lamb * self.time))**(1-1/(2*k)) * 
-            ((2*k + gamma)/(2*k +1))**(1/(2*k)) * gamma**(1/(2*k)) / 2**(1-1/k))**(1/2) -1) 
+            chi = (lamb/len(self.spectral_norms)) * ((self.nb * (self.epsilon/(lamb * self.time))**(1-(1/(2*k))) * 
+            ((2*k + upsilon)/(2*k +1))**(1/(2*k)) * (upsilon**(1/(2*k)) / 2**(1-(1/k))))**(1/2) - 1) 
             
+            #test_probs = []
             for i in range(len(self.spectral_norms)):
                 num = np.random.random()
-                prob=(1- min(self.spectral_norms[i]*chi, 1))
+                prob=(1- min((1/self.spectral_norms[i])*chi, 1))
+                #test_probs.append((1/self.spectral_norms[i])*chi)
                 if prob >= num:
                     self.a_norms.append(([i, self.spectral_norms[i]]))
                 else:
                     self.b_norms.append(([i, self.spectral_norms[i]]))
+            #print(max(test_probs)) -- for potentially finding a minima???
             return 0
         
         #Nelder-Mead optimization protocol based on analytic cost function for first order
@@ -458,13 +466,13 @@ class CompositeSim:
             return 1
 
     #Simulate and error scaling 
-    def simulate(self, time, samples, iterations, do_outer_loop, repartition): 
-        if repartition == True: #repartition for each point in time, only necessary for some schemes
-            self.time = time
-            self.partitioning()
-        
+    def simulate(self, time, samples, iterations): 
         if self.nb_optimizer == False: 
             self.nb = samples  #specifying the number of samples having optimized Nb does nothing
+
+        if self.repartition == True: #repartition for each point in time, only necessary for some schemes
+            self.time = time
+            self.partitioning()
 
         self.gate_count = 0
         channel_visits = computeTrotterTimesteps(2, time / (1. * iterations), self.outter_order)
@@ -483,13 +491,13 @@ class CompositeSim:
         return current_state
             
     #Monte-Carlo sample the infidelity, should work for composite channel    
-    def sample_channel_inf(self, time, samples, iterations, mcsamples, do_outer_loop, repartition): #RNGSEED DOES NOT SEEM TO WORK HERE???
+    def sample_channel_inf(self, time, samples, iterations, mcsamples): #RNGSEED DOES NOT SEEM TO WORK HERE???
         sample_fidelity = []
         H = []
         for i in range(len(self.spectral_norms)):
             H.append(self.hamiltonian_list[i] * self.spectral_norms[i])
         for s in range(mcsamples):
-            sim_state = self.simulate(time, samples, iterations, do_outer_loop, repartition)
+            sim_state = self.simulate(time, samples, iterations)
             good_state = np.dot(linalg.expm(1j * sum(H) * time), self.initial_state)
             sample_fidelity.append((np.abs(np.dot(good_state.conj().T, sim_state)))**2)
         infidelity = 1- sum(sample_fidelity) / mcsamples 
