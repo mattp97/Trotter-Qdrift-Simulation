@@ -1,3 +1,4 @@
+from ast import And
 from asyncore import loop
 from operator import matmul
 import numpy as np
@@ -251,7 +252,7 @@ class CompositeSim:
         self.b_norms = []
         self.hilbert_dim = hamiltonian_list[0].shape[0]
         self.rng_seed = rng_seed
-        self.outter_order = outter_order #REDEFINE THIS IN TROTTER!!!!
+        self.outter_order = outter_order 
         self.inner_order = inner_order
         self.partition = partition
         self.repartition = repartition
@@ -363,30 +364,56 @@ class CompositeSim:
         cost += (qd_sum**2) * 4/self.nb #dividing by Nb at the end (this form is just being used so I can easily optimize Nb as well)
         return cost
 
+    #Function that allows for the optimization of the nb parameter in the probabilistic partitioning scheme (at each timestep)
+    def prob_nb_optima(self, test_nb):
+        k = self.inner_order/2
+        upsilon = 2*(5**(k -1))
+        lamb = sum(self.spectral_norms)
+        test_chi = (lamb/len(self.spectral_norms)) * ((test_nb * (self.epsilon/(lamb * self.time))**(1-(1/(2*k))) * 
+        ((2*k + upsilon)/(2*k +1))**(1/(2*k)) * (upsilon**(1/(2*k)) / 2**(1-(1/k))))**(1/2) - 1) 
+            
+        test_probs = []
+        for i in range(len(self.spectral_norms)):
+            test_probs.append((1/self.spectral_norms[i])*test_chi) 
+        return max(test_probs)
+
 
     #partitioning method to execute the partitioning method of the users choice, random likely not used in practice
     def partitioning(self):
+        if ((self.partition == "trotter" or self.partition == "qdrift" or self.partition == "random" or self.partition == "optimize") and (self.repartition == True)): #This condition may change for the optimize scheme later
+            print("This partitioning method does not require repartitioning") #Checks that our scheme is sane, prevents unnecessary time wasting
+            return 1
+
         if self.partition == "prob":
             if self.inner_order > 1: k = self.inner_order/2
             else: return "partition not defined for this order"
             if self.repartition == False:
                 print("this method requires repartitioning at each timestep")
                 return 1
+
+            optimal_nb = optimize.minimize(self.prob_nb_optima, self.nb, method='Nelder-Mead', bounds = (0, None)) #Nb attribute serves as an inital geuss in this partition
+            nb_high = int(optimal_nb.x +1)
+            nb_low = int(optimal_nb.x)
+            prob_high = self.prob_nb_optima(nb_high)
+            prob_low = self.prob_nb_optima(nb_low)
+            if prob_high > prob_low:
+                self.nb = nb_low
+            else:
+                self.nb = nb_high
+
+            print(self.nb)
             upsilon = 2*(5**(k -1))
             lamb = sum(self.spectral_norms)
             chi = (lamb/len(self.spectral_norms)) * ((self.nb * (self.epsilon/(lamb * self.time))**(1-(1/(2*k))) * 
             ((2*k + upsilon)/(2*k +1))**(1/(2*k)) * (upsilon**(1/(2*k)) / 2**(1-(1/k))))**(1/2) - 1) 
             
-            #test_probs = []
             for i in range(len(self.spectral_norms)):
                 num = np.random.random()
                 prob=(1- min((1/self.spectral_norms[i])*chi, 1))
-                #test_probs.append((1/self.spectral_norms[i])*chi)
                 if prob >= num:
                     self.a_norms.append(([i, self.spectral_norms[i]]))
                 else:
                     self.b_norms.append(([i, self.spectral_norms[i]]))
-            #print(max(test_probs)) -- for potentially finding a minima???
             return 0
         
         #Nelder-Mead optimization protocol based on analytic cost function for first order
@@ -445,6 +472,23 @@ class CompositeSim:
             self.b_norms = np.array(self.b_norms, dtype='complex')
             return 0
 
+        #Nelder-Mead optimization protocol based on analytic cost function for first order
+        elif self.partition == "optimize chop": 
+            guess = sum(self.spectral_norms)/len(self.spectral_norms) #guess the average for the weights
+            upper_bound = [1 for x in range(len(self.spectral_norms))]
+            upper_bound.append(20) #no upper bound for Nb but set to some number we can compute instead of np.inf
+            lower_bound = [0 for x in range(len(self.spectral_norms) + 1)]  #lower bound for Nb is 0
+            optimized_threshold = optimize.minimize(self.nb_first_order_cost, guess, method='Nelder-Mead', bounds=optimize.Bounds(upper_bound, lower_bound))
+            print(optimized_threshold.x)
+            for i in range(len(self.spectral_norms)):
+                if self.spectral_norms[i] >= optimized_threshold:
+                    self.a_norms.append(([i, self.spectral_norms[i]]))
+                else:
+                    self.b_norms.append(([i, self.spectral_norms[i]]))
+            self.a_norms = np.array(self.a_norms, dtype='complex')
+            self.b_norms = np.array(self.b_norms, dtype='complex')
+            return 0
+
         elif self.partition == "trotter":
             for i in range(len(self.spectral_norms)):
                 self.a_norms.append([i, self.spectral_norms[i]])
@@ -471,6 +515,8 @@ class CompositeSim:
             self.nb = samples  #specifying the number of samples having optimized Nb does nothing
 
         if self.repartition == True: #repartition for each point in time, only necessary for some schemes
+            self.a_norms = [] #reset to empty lists so we can append to them when we call partitioning
+            self.b_norms = []
             self.time = time
             self.partitioning()
             self.set_simulators()
@@ -505,11 +551,11 @@ class CompositeSim:
         return infidelity #this is of type array for some reason?
 
     #To analyse the number of gates required to meet a certain error threshold 
-    def sim_channel_performance(self, time, samples, iterations, mcsamples, do_outer_loop, repartition):
+    def sim_channel_performance(self, time, samples, iterations, mcsamples):
         good_inf = []
         bad_inf = []
         while len(good_inf) < 5: #arbitrarily choosing 5 "good points" to be sure we have not met error threshold by monte-carlo randomness
-            infidelity = self.sample_channel_inf(time, samples, iterations, mcsamples, do_outer_loop, repartition)
+            infidelity = self.sample_channel_inf(time, samples, iterations, mcsamples)
             if infidelity > self.epsilon:
                 bad_inf.append([self.gate_count, float(infidelity)]) #self.gate_count is updated by the function simulate :)
                 iterations +=1
@@ -520,6 +566,7 @@ class CompositeSim:
         good_inf = np.array(good_inf)
         bad_inf = np.array(bad_inf)
         gate_data = np.concatenate((bad_inf, good_inf), 0)
+        print(gate_data)
         
         poi = np.interp([self.epsilon], list(gate_data[:,1]), list(gate_data[:,0])) #interpolates where the error threshold is saturated
         return poi
