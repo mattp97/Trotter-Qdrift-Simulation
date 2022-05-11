@@ -365,7 +365,7 @@ class CompositeSim:
     #partitioning method to execute the partitioning method of the users choice, random likely not used in practice
     def partitioning(self):
         if self.partition == "prob":
-            if self.order > 1: k = self.order/2
+            if self.trotter_sim.order > 1: k = self.trotter_sim.order/2
             else: return "partition not defined for this order"
             gamma = 2*5**(k -1)
             lamb = sum(self.spectral_norms)
