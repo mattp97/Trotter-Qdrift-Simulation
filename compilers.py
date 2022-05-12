@@ -10,6 +10,7 @@ from numpy import random
 import cmath
 import time
 from sympy import S, symbols, printing
+from skopt import gp_minimize
 
 FLOATING_POINT_PRECISION = 1e-10
 
@@ -374,7 +375,7 @@ class CompositeSim:
             
         test_probs = []
         for i in range(len(self.spectral_norms)):
-            test_probs.append((1/self.spectral_norms[i])*test_chi) 
+            test_probs.append(float(np.abs((1/self.spectral_norms[i])*test_chi))) #ISSUE
         return max(test_probs)
 
 
@@ -387,23 +388,29 @@ class CompositeSim:
         if self.partition == "prob":
             if self.inner_order > 1: k = self.inner_order/2
             else: return "partition not defined for this order"
+            
             if self.repartition == False:
                 print("this method requires repartitioning at each timestep")
                 return 1
-
-            optimal_nb = optimize.minimize(self.prob_nb_optima, self.nb, method='Nelder-Mead', bounds = (0, None)) #Nb attribute serves as an inital geuss in this partition
-            nb_high = int(optimal_nb.x +1)
-            nb_low = int(optimal_nb.x)
-            prob_high = self.prob_nb_optima(nb_high)
-            prob_low = self.prob_nb_optima(nb_low)
-            if prob_high > prob_low:
-                self.nb = nb_low
-            else:
-                self.nb = nb_high
-
-            print(self.nb)
+            
             upsilon = 2*(5**(k -1))
             lamb = sum(self.spectral_norms)
+
+            if self.nb_optimizer == True:
+                optimal_nb = optimize.minimize(self.prob_nb_optima, self.nb, method='Nelder-Mead', bounds = optimize.Bounds([0], [np.inf], keep_feasible = False)) #Nb attribute serves as an inital geuss in this partition
+                nb_high = int(optimal_nb.x +1)
+                nb_low = int(optimal_nb.x)
+                prob_high = self.prob_nb_optima(nb_high) #check higher, (nb must be int)
+                prob_low = self.prob_nb_optima(nb_low) #check lower 
+                if prob_high > prob_low:
+                    self.nb = nb_low
+                else:
+                    self.nb = nb_high
+            else:
+                self.nb = int(((lamb * self.time/(self.epsilon))**(1-(1/(2*k))) * ((2*k +1)/(2*k + upsilon))**(1/(2*k)) * (2**(1-(1/k))/ upsilon**(1/(2*k)))) +1)
+            
+            print(self.nb)
+            
             chi = (lamb/len(self.spectral_norms)) * ((self.nb * (self.epsilon/(lamb * self.time))**(1-(1/(2*k))) * 
             ((2*k + upsilon)/(2*k +1))**(1/(2*k)) * (upsilon**(1/(2*k)) / 2**(1-(1/k))))**(1/2) - 1) 
             
@@ -424,7 +431,7 @@ class CompositeSim:
                 upper_bound = [1 for x in range(len(self.spectral_norms))]
                 upper_bound.append(20) #no upper bound for Nb but set to some number we can compute instead of np.inf
                 lower_bound = [0 for x in range(len(self.spectral_norms) + 1)]  #lower bound for Nb is 0
-                optimized_weights = optimize.minimize(self.nb_first_order_cost, guess, method='Nelder-Mead', bounds=optimize.Bounds(upper_bound, lower_bound))
+                optimized_weights = optimize.minimize(self.nb_first_order_cost, guess, method='Nelder-Mead', bounds=optimize.Bounds(lower_bound, upper_bound))
                 print(optimized_weights.x)
                 for i in range(len(self.spectral_norms)):
                     if optimized_weights.x[i] >= self.weight_threshold:
@@ -440,7 +447,7 @@ class CompositeSim:
                 guess = [0.5 for x in range(len(self.spectral_norms))] #guess for the weights 
                 upper_bound = [1 for x in range(len(self.spectral_norms))]
                 lower_bound = [0 for x in range(len(self.spectral_norms))]  
-                optimized_weights = optimize.minimize(self.first_order_cost, guess, method='Nelder-Mead', bounds=optimize.Bounds(upper_bound, lower_bound))
+                optimized_weights = optimize.minimize(self.first_order_cost, guess, method='Nelder-Mead', bounds=optimize.Bounds(lower_bound, upper_bound)) 
                 print(optimized_weights.x)
                 for i in range(len(self.spectral_norms)):
                     if optimized_weights.x[i] >= self.weight_threshold:
@@ -538,7 +545,7 @@ class CompositeSim:
         return current_state
             
     #Monte-Carlo sample the infidelity, should work for composite channel    
-    def sample_channel_inf(self, time, samples, iterations, mcsamples): #RNGSEED DOES NOT SEEM TO WORK HERE???
+    def sample_channel_inf(self, time, samples, iterations, mcsamples): 
         sample_fidelity = []
         H = []
         for i in range(len(self.spectral_norms)):
@@ -550,23 +557,42 @@ class CompositeSim:
         infidelity = 1- sum(sample_fidelity) / mcsamples 
         return infidelity #this is of type array for some reason?
 
-    #To analyse the number of gates required to meet a certain error threshold 
+    #To analyse the number of gates required to meet a certain error threshold, function is guarenteed to work with iterations =1, but can be sped up by a better geuss.
     def sim_channel_performance(self, time, samples, iterations, mcsamples):
         good_inf = []
         bad_inf = []
-        while len(good_inf) < 5: #arbitrarily choosing 5 "good points" to be sure we have not met error threshold by monte-carlo randomness
-            infidelity = self.sample_channel_inf(time, samples, iterations, mcsamples)
-            if infidelity > self.epsilon:
-                bad_inf.append([self.gate_count, float(infidelity)]) #self.gate_count is updated by the function simulate :)
-                iterations +=1
-            else: 
-                good_inf.append([self.gate_count, float(infidelity)]) #dimensionality/ type for infidelity should be fixed and this 'float' can be removed
-                iterations +=1
+        lower_bound = iterations
+        #Exponential search to set upper bound, then binary search in that interval
+        infidelity = self.sample_channel_inf(time, samples, iterations, mcsamples)
+        if infidelity > self.epsilon:
+            while infidelity > self.epsilon:
+                infidelity = self.sample_channel_inf(time, samples, iterations, mcsamples)
+                iterations *=2 
+        else: print("Iterations guess too large, simulation already has lower error than " + str(self.epsilon))
+        upper_bound = iterations
+        #Binary search
+        while lower_bound < upper_bound:
+            mid = 1+ (upper_bound - lower_bound)//2
+            infidelity = self.sample_channel_inf(time, samples, mid, mcsamples)
+            if (self.sample_channel_inf(time, samples, mid + 2, mcsamples) < self.epsilon) and (self.sample_channel_inf(time, samples, mid - 2, mcsamples) > self.epsilon):
+                break #calling the critical point the point where the second point on either side goes from a bad point to a good point (we are in the neighbourhood of the ideal gate count)
+            elif infidelity < self.epsilon:
+                upper_bound = mid - 1
+            else:
+                lower_bound = mid + 1
+
+        for i in range (mid+1, mid +5):
+            infidelity = self.sample_channel_inf(time, samples, i, mcsamples)
+            good_inf.append([self.gate_count, float(infidelity)])
+        for j in range (mid-5, mid +1):
+            infidelity = self.sample_channel_inf(time, samples, j, mcsamples)
+            bad_inf.append([self.gate_count, float(infidelity)])
 
         good_inf = np.array(good_inf)
         bad_inf = np.array(bad_inf)
         gate_data = np.concatenate((bad_inf, good_inf), 0)
         print(gate_data)
         
-        poi = np.interp([self.epsilon], list(gate_data[:,1]), list(gate_data[:,0])) #interpolates where the error threshold is saturated
-        return poi
+        poi = np.interp([self.epsilon], list(gate_data[:,1]), list(gate_data[:,0])) #interpolates where the error threshold is saturated (point of intersection)
+        return float(poi)
+        #INTERPOLATOR IS JUST RETURNING THE ENDPOINT!!!
