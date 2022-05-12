@@ -386,7 +386,7 @@ class CompositeSim:
             return 1
 
         if self.partition == "prob":
-            if self.inner_order > 1: k = self.inner_order/2
+            if self.trotter_sim.order > 1: k = self.trotter_sim.order/2
             else: return "partition not defined for this order"
             
             if self.repartition == False:
