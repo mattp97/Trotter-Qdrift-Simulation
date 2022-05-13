@@ -5,6 +5,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy import linalg
 from scipy import optimize
+from scipy import interpolate
 import math
 from numpy import random
 import cmath
@@ -574,7 +575,7 @@ class CompositeSim:
         while lower_bound < upper_bound:
             mid = 1+ (upper_bound - lower_bound)//2
             infidelity = self.sample_channel_inf(time, samples, mid, mcsamples)
-            if (self.sample_channel_inf(time, samples, mid + 2, mcsamples) < self.epsilon) and (self.sample_channel_inf(time, samples, mid - 2, mcsamples) > self.epsilon):
+            if (self.sample_channel_inf(time, samples, mid + 5, mcsamples) < self.epsilon) and (self.sample_channel_inf(time, samples, mid - 5, mcsamples) > self.epsilon):
                 break #calling the critical point the point where the second point on either side goes from a bad point to a good point (we are in the neighbourhood of the ideal gate count)
             elif infidelity < self.epsilon:
                 upper_bound = mid - 1
@@ -593,6 +594,8 @@ class CompositeSim:
         gate_data = np.concatenate((bad_inf, good_inf), 0)
         print(gate_data)
         
-        poi = np.interp([self.epsilon], list(gate_data[:,1]), list(gate_data[:,0])) #interpolates where the error threshold is saturated (point of intersection)
-        return float(poi)
+        #poi = np.interp([self.epsilon], list(gate_data[:,1]), list(gate_data[:,0])) #interpolates where the error threshold is saturated (point of intersection)
+        #return float(poi)
         #INTERPOLATOR IS JUST RETURNING THE ENDPOINT!!!
+        fit = np.poly1d(np.polyfit(gate_data[:,1], gate_data[:,0], 1)) #linear best fit 
+        return fit(self.epsilon)
