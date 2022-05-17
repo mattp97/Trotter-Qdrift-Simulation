@@ -41,7 +41,7 @@ def computeTrotterTimesteps(numTerms, simTime, trotterOrder = 1):
         return ret
 
     elif trotterOrder % 2 == 0:
-        timeConst = 1.0/(4 - 4**(1.0 / trotterOrder - 1))
+        timeConst = 1.0/(4 - 4**(1.0 / (trotterOrder - 1)))
         outter = computeTrotterTimesteps(numTerms, timeConst * simTime, trotterOrder - 2)
         inner = computeTrotterTimesteps(numTerms, (1. - 4. * timeConst) * simTime, trotterOrder - 2)
         ret = [] + 2 * outter + inner + 2 * outter
@@ -410,7 +410,7 @@ class CompositeSim:
             else:
                 self.nb = int(((lamb * self.time/(self.epsilon))**(1-(1/(2*k))) * ((2*k +1)/(2*k + upsilon))**(1/(2*k)) * (2**(1-(1/k))/ upsilon**(1/(2*k)))) +1)
             
-            print(self.nb)
+            #print(self.nb)
             
             chi = (lamb/len(self.spectral_norms)) * ((self.nb * (self.epsilon/(lamb * self.time))**(1-(1/(2*k))) * 
             ((2*k + upsilon)/(2*k +1))**(1/(2*k)) * (upsilon**(1/(2*k)) / 2**(1-(1/k))))**(1/2) - 1) 
@@ -526,7 +526,7 @@ class CompositeSim:
             self.a_norms = [] #reset to empty lists so we can append to them when we call partitioning
             self.b_norms = []
             self.time = time
-            self.partitioning()
+            self.partitioning() #PROBLEM with this, partitioning is called for each monte carlo sample at the same timestep leading to large overhead!!!
             self.set_simulators()
         
         self.gate_count = 0
@@ -569,7 +569,9 @@ class CompositeSim:
             while infidelity > self.epsilon:
                 infidelity = self.sample_channel_inf(time, samples, iterations, mcsamples)
                 iterations *=2 
-        else: print("Iterations guess too large, simulation already has lower error than " + str(self.epsilon))
+        else: 
+            print("Iterations guess too large, simulation already has lower error than " + str(self.epsilon))
+            return 1
         upper_bound = iterations
         #Binary search
         while lower_bound < upper_bound:
