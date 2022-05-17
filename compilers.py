@@ -247,7 +247,7 @@ class QDriftSimulator:
 #Composite simulation but using a framework with lists of tuples instead of lists of matrices for improved runtime
 #This code adopts the convention that for lists of tuples, indices are stored in [0] and values in [1]
 class CompositeSim:
-    def __init__(self, hamiltonian_list = [], inner_order = 1, outter_order = 1, initial_time = 0.1, partition = "random", repartition = False, rng_seed = 1, nb_optimizer = False, weight_threshold = 0.5, nb = 1, epsilon = 0.001):
+    def __init__(self, hamiltonian_list = [], inner_order = 1, outter_order = 1, initial_time = 0.1, partition = "random", rng_seed = 1, nb_optimizer = False, weight_threshold = 0.5, nb = 1, epsilon = 0.001):
         self.hamiltonian_list = []
         self.spectral_norms = []
         self.a_norms = [] #contains the partitioned norms, as well as the index of the matrix they come from
@@ -257,7 +257,6 @@ class CompositeSim:
         self.outter_order = outter_order 
         self.inner_order = inner_order
         self.partition = partition
-        self.repartition = repartition
         self.nb_optimizer = nb_optimizer
         self.epsilon = epsilon #simulation error
         self.weight_threshold = weight_threshold
@@ -277,7 +276,7 @@ class CompositeSim:
         self.prep_hamiltonian_lists(hamiltonian_list) #do we want this done before or after the partitioning?
         np.random.seed(self.rng_seed)
         self.partitioning() #note error was raised because partition() is a built in python method
-        self.set_simulators()
+        self.reset_nested_sims()
 
         print("There are " + str(len(self.a_norms)) + " terms in Trotter") #make the partition known
         print("There are " + str(len(self.b_norms)) + " terms in QDrift")
@@ -324,7 +323,7 @@ class CompositeSim:
         return 0
 
     # Prep simulators with terms, isolated as function for reusability in partitioning
-    def set_simulators(self):
+    def reset_nested_sims(self):
         qdrift_terms, qdrift_norms = [] , []
         trott_terms, trott_norms = [] , []
         for ix in range(len(self.a_norms)):
@@ -382,17 +381,13 @@ class CompositeSim:
 
     #partitioning method to execute the partitioning method of the users choice, random likely not used in practice
     def partitioning(self):
-        if ((self.partition == "trotter" or self.partition == "qdrift" or self.partition == "random" or self.partition == "optimize") and (self.repartition == True)): #This condition may change for the optimize scheme later
+        if ((self.partition == "trotter" or self.partition == "qdrift" or self.partition == "random" or self.partition == "optimize")): #This condition may change for the optimize scheme later
             print("This partitioning method does not require repartitioning") #Checks that our scheme is sane, prevents unnecessary time wasting
             return 1
 
         if self.partition == "prob":
             if self.trotter_sim.order > 1: k = self.trotter_sim.order/2
             else: return "partition not defined for this order"
-            
-            if self.repartition == False:
-                print("this method requires repartitioning at each timestep")
-                return 1
             
             upsilon = 2*(5**(k -1))
             lamb = sum(self.spectral_norms)
@@ -517,17 +512,16 @@ class CompositeSim:
             print("Invalid input for attribute 'partition' ")
             return 1
 
+    def repartition(self):
+        self.a_norms = []
+        self.b_norms = []
+        self.partitioning()
+        self.reset_nested_sims()
+
     #Simulate and error scaling 
     def simulate(self, time, samples, iterations): 
         if self.nb_optimizer == False: 
             self.nb = samples  #specifying the number of samples having optimized Nb does nothing
-
-        if self.repartition == True: #repartition for each point in time, only necessary for some schemes
-            self.a_norms = [] #reset to empty lists so we can append to them when we call partitioning
-            self.b_norms = []
-            self.time = time
-            self.partitioning() #PROBLEM with this, partitioning is called for each monte carlo sample at the same timestep leading to large overhead!!!
-            self.set_simulators()
         
         self.gate_count = 0
         channel_visits = computeTrotterTimesteps(2, time / (1. * iterations), self.outter_order)
@@ -545,7 +539,7 @@ class CompositeSim:
         
         return current_state
             
-    #Monte-Carlo sample the infidelity, should work for composite channel    
+    #Monte-Carlo sample the infidelity, should work for composite channel
     def sample_channel_inf(self, time, samples, iterations, mcsamples): 
         sample_fidelity = []
         H = []
@@ -565,14 +559,18 @@ class CompositeSim:
         lower_bound = iterations
         #Exponential search to set upper bound, then binary search in that interval
         infidelity = self.sample_channel_inf(time, samples, iterations, mcsamples)
-        if infidelity > self.epsilon:
-            while infidelity > self.epsilon:
-                infidelity = self.sample_channel_inf(time, samples, iterations, mcsamples)
-                iterations *=2 
-        else: 
-            print("Iterations guess too large, simulation already has lower error than " + str(self.epsilon))
+
+        if infidelity < self.epsilon:
+            print("[sim_channel_performance] Iterations too large, already below error threshold")
             return 1
+        # Iterate up until some max cutoff
         upper_bound = iterations
+        for n in range(20):
+            infidelity = self.sample_channel_inf(time, samples, iterations, mcsamples)
+            upper_bound *=2 
+            if infidelity < self.epsilon:
+                break
+
         #Binary search
         while lower_bound < upper_bound:
             mid = 1+ (upper_bound - lower_bound)//2
