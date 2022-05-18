@@ -565,11 +565,19 @@ class CompositeSim:
             return 1
         # Iterate up until some max cutoff
         upper_bound = iterations
+        break_flag = False
         for n in range(20):
             infidelity = self.sample_channel_inf(time, samples, iterations, mcsamples)
-            upper_bound *=2 
+            upper_bound *= 2 
             if infidelity < self.epsilon:
+                break_flag = True
                 break
+        
+        if break_flag == False :
+            print("[sim_channel_performance] maximum number of iterations hit, something is probably off")
+            return 1
+
+
 
         #Binary search
         while lower_bound < upper_bound:
