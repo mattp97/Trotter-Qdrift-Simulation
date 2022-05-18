@@ -42,9 +42,9 @@ def computeTrotterTimesteps(numTerms, simTime, trotterOrder = 1):
 
     elif trotterOrder % 2 == 0:
         timeConst = 1.0/(4 - 4**(1.0 / (trotterOrder - 1)))
-        outter = computeTrotterTimesteps(numTerms, timeConst * simTime, trotterOrder - 2)
+        outer = computeTrotterTimesteps(numTerms, timeConst * simTime, trotterOrder - 2)
         inner = computeTrotterTimesteps(numTerms, (1. - 4. * timeConst) * simTime, trotterOrder - 2)
-        ret = [] + 2 * outter + inner + 2 * outter
+        ret = [] + 2 * outer + inner + 2 * outer
         return ret
 
     else:
@@ -247,14 +247,14 @@ class QDriftSimulator:
 #Composite simulation but using a framework with lists of tuples instead of lists of matrices for improved runtime
 #This code adopts the convention that for lists of tuples, indices are stored in [0] and values in [1]
 class CompositeSim:
-    def __init__(self, hamiltonian_list = [], inner_order = 1, outter_order = 1, initial_time = 0.1, partition = "random", rng_seed = 1, nb_optimizer = False, weight_threshold = 0.5, nb = 1, epsilon = 0.001):
+    def __init__(self, hamiltonian_list = [], inner_order = 1, outer_order = 1, initial_time = 0.1, partition = "random", rng_seed = 1, nb_optimizer = False, weight_threshold = 0.5, nb = 1, epsilon = 0.001):
         self.hamiltonian_list = []
         self.spectral_norms = []
         self.a_norms = [] #contains the partitioned norms, as well as the index of the matrix they come from
         self.b_norms = []
         self.hilbert_dim = hamiltonian_list[0].shape[0]
         self.rng_seed = rng_seed
-        self.outter_order = outter_order 
+        self.outer_order = outer_order 
         self.inner_order = inner_order
         self.partition = partition
         self.nb_optimizer = nb_optimizer
@@ -502,7 +502,7 @@ class CompositeSim:
             self.nb = samples  #specifying the number of samples having optimized Nb does nothing
         
         self.gate_count = 0
-        channel_visits = computeTrotterTimesteps(2, time / (1. * iterations), self.outter_order)
+        channel_visits = computeTrotterTimesteps(2, time / (1. * iterations), self.outer_order)
         current_state = np.copy(self.initial_state)
         for i in range(iterations):
             for (ix, sim_time) in channel_visits:
