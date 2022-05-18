@@ -295,30 +295,8 @@ class CompositeSim:
             self.hamiltonian_list.append(h / temp_norm)
         return 0
 
-    # Do some sanity checking before storing. Check if input is proper dimensions and an actual
-    # quantum state.
+
     def set_initial_state(self, psi_init):
-        global FLOATING_POINT_PRECISION
-        if type(psi_init) != type(self.initial_state):
-            print("[set_initial_state]: input type not numpy ndarray")
-            return 1
-
-        if psi_init.size != self.initial_state.size:
-            print("[set_initial_state]: input size not matching")
-            return 1
-
-        # check that the frobenius aka l2 norm is 1
-        if np.linalg.norm(psi_init, ord = 2) - 1.0 > FLOATING_POINT_PRECISION:
-            print("[set_initial_state]: input is not properly normalized")
-            return 1
-
-        # check that each dimension has magnitude between 0 and 1
-        for ix in range(len(psi_init)):
-            if np.abs(psi_init[ix]) > 1.0:
-                print("[set_initial_state]: too big of a dimension in vector")
-                return 1
-
-        # Should be good to go now
         self.initial_state = psi_init
         return 0
 
