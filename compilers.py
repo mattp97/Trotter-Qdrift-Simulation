@@ -10,6 +10,7 @@ import math
 from numpy import random
 import cmath
 import time
+from sqlalchemy import false
 from sympy import S, symbols, printing
 from skopt import gp_minimize
 
@@ -42,9 +43,9 @@ def computeTrotterTimesteps(numTerms, simTime, trotterOrder = 1):
 
     elif trotterOrder % 2 == 0:
         timeConst = 1.0/(4 - 4**(1.0 / (trotterOrder - 1)))
-        outter = computeTrotterTimesteps(numTerms, timeConst * simTime, trotterOrder - 2)
+        outer = computeTrotterTimesteps(numTerms, timeConst * simTime, trotterOrder - 2)
         inner = computeTrotterTimesteps(numTerms, (1. - 4. * timeConst) * simTime, trotterOrder - 2)
-        ret = [] + 2 * outter + inner + 2 * outter
+        ret = [] + 2 * outer + inner + 2 * outer
         return ret
 
     else:
@@ -193,9 +194,10 @@ class QDriftSimulator:
         lamb = np.sum(self.spectral_norms)
         for ix in range(len(self.spectral_norms)):
             if sample > tot and sample < tot + self.spectral_norms[ix] / lamb:
-                return ix
+                index = ix
+                break
             tot += self.spectral_norms[ix] / lamb
-        return len(self.spectral_norms) - 1
+        return index
 
     def simulate(self, time, samples):
         self.gate_count = 0
@@ -247,14 +249,14 @@ class QDriftSimulator:
 #Composite simulation but using a framework with lists of tuples instead of lists of matrices for improved runtime
 #This code adopts the convention that for lists of tuples, indices are stored in [0] and values in [1]
 class CompositeSim:
-    def __init__(self, hamiltonian_list = [], inner_order = 1, outter_order = 1, initial_time = 0.1, partition = "random", rng_seed = 1, nb_optimizer = False, weight_threshold = 0.5, nb = 1, epsilon = 0.001):
+    def __init__(self, hamiltonian_list = [], inner_order = 1, outer_order = 1, initial_time = 0.1, partition = "random", rng_seed = 1, nb_optimizer = False, weight_threshold = 0.5, nb = 1, epsilon = 0.001):
         self.hamiltonian_list = []
         self.spectral_norms = []
         self.a_norms = [] #contains the partitioned norms, as well as the index of the matrix they come from
         self.b_norms = [] 
         self.hilbert_dim = hamiltonian_list[0].shape[0] 
         self.rng_seed = rng_seed
-        self.outter_order = outter_order 
+        self.outer_order = outer_order 
         self.inner_order = inner_order
         self.partition = partition
         self.nb_optimizer = nb_optimizer
@@ -296,30 +298,8 @@ class CompositeSim:
             self.hamiltonian_list.append(h / temp_norm)
         return 0
 
-    # Do some sanity checking before storing. Check if input is proper dimensions and an actual
-    # quantum state.
+
     def set_initial_state(self, psi_init):
-        global FLOATING_POINT_PRECISION
-        if type(psi_init) != type(self.initial_state):
-            print("[set_initial_state]: input type not numpy ndarray")
-            return 1
-
-        if psi_init.size != self.initial_state.size:
-            print("[set_initial_state]: input size not matching")
-            return 1
-
-        # check that the frobenius aka l2 norm is 1
-        if np.linalg.norm(psi_init, ord = 2) - 1.0 > FLOATING_POINT_PRECISION:
-            print("[set_initial_state]: input is not properly normalized")
-            return 1
-
-        # check that each dimension has magnitude between 0 and 1
-        for ix in range(len(psi_init)):
-            if np.abs(psi_init[ix]) > 1.0:
-                print("[set_initial_state]: too big of a dimension in vector")
-                return 1
-
-        # Should be good to go now
         self.initial_state = psi_init
         return 0
 
@@ -525,7 +505,7 @@ class CompositeSim:
             self.nb = samples  #specifying the number of samples having optimized Nb does nothing
         
         self.gate_count = 0
-        channel_visits = computeTrotterTimesteps(2, time / (1. * iterations), self.outter_order)
+        channel_visits = computeTrotterTimesteps(2, time / (1. * iterations), self.outer_order)
         current_state = np.copy(self.initial_state)
         for i in range(iterations):
             for (ix, sim_time) in channel_visits:
@@ -567,11 +547,17 @@ class CompositeSim:
                 return 1
             # Iterate up until some max cutoff
             upper_bound = samples
+            break_flag = False
             for n in range(20):
                 infidelity = self.sample_channel_inf(time, upper_bound, iterations, mcsamples)
                 upper_bound *=2 
                 if infidelity < self.epsilon:
+                    break_flag = True
                     break
+            if break_flag == False :
+                print("[sim_channel_performance] maximum number of iterations hit, something is probably off")
+                return 1
+
             #Binary search
             while lower_bound < upper_bound:
                 mid = 1+ (upper_bound - lower_bound)//2
@@ -594,18 +580,23 @@ class CompositeSim:
         else:
             lower_bound = iterations
             #Exponential search to set upper bound, then binary search in that interval
-            infidelity = self.sample_channel_inf(time, samples, iterations, mcsamples)
+            infidelity = self.sample_channel_inf(time, samples, lower_bound, mcsamples)
 
             if infidelity < self.epsilon:
                 print("[sim_channel_performance] Iterations too large, already below error threshold")
                 return 1
             # Iterate up until some max cutoff
             upper_bound = iterations
+            break_flag = False
             for n in range(20):
                 infidelity = self.sample_channel_inf(time, samples, upper_bound, mcsamples)
-                upper_bound *=2 
+                upper_bound *= 2 
                 if infidelity < self.epsilon:
+                    break_flag = True
                     break
+            if break_flag == False :
+                print("[sim_channel_performance] maximum number of iterations hit, something is probably off")
+                return 1
 
             #Binary search
             while lower_bound < upper_bound:
@@ -618,12 +609,12 @@ class CompositeSim:
                 else:
                     lower_bound = mid + 1
 
-            for i in range (mid+1, mid +4):
-                infidelity = self.sample_channel_inf(time, samples, i, mcsamples)
-                good_inf.append([self.gate_count, float(infidelity)])
-            for j in range (mid-3, mid +1):
-                infidelity = self.sample_channel_inf(time, samples, j, mcsamples)
-                bad_inf.append([self.gate_count, float(infidelity)])
+        for i in range (mid+1, mid +4):
+            infidelity = self.sample_channel_inf(time, samples, i, mcsamples)
+            good_inf.append([self.gate_count, float(infidelity)])
+        for j in range (mid-3, mid +1):
+            infidelity = self.sample_channel_inf(time, samples, j, mcsamples)
+            bad_inf.append([self.gate_count, float(infidelity)])
         #Store the points to interpolate
         good_inf = np.array(good_inf)
         bad_inf = np.array(bad_inf)
