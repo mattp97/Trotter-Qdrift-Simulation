@@ -114,9 +114,9 @@ class TrotterSim:
             return np.copy(self.initial_state)
 
         op_time = time/iterations
-        steps = computeTrotterTimesteps(len(self.hamiltonian_list), op_time, self.order) #issue with how iterations is addressed here... not actually iterating??
+        steps = computeTrotterTimesteps(len(self.hamiltonian_list), op_time, self.order) 
         psi = self.initial_state
-        for (ix, timestep) in steps * iterations: #should this be imbedded in a for i in range(iters) loop?
+        for (ix, timestep) in steps * iterations: 
             psi = linalg.expm(1j * self.hamiltonian_list[ix] * self.spectral_norms[ix] * timestep) @ psi
             self.gate_count += 1
         return psi
@@ -501,9 +501,8 @@ class CompositeSim:
 
     #Simulate and error scaling 
     def simulate(self, time, samples, iterations): 
-        if self.nb_optimizer == False: 
+        if (self.nb_optimizer == False) and (self.partition != 'prob'): 
             self.nb = samples  #specifying the number of samples having optimized Nb does nothing
-        
         self.gate_count = 0
         channel_visits = computeTrotterTimesteps(2, time / (1. * iterations), self.outer_order)
         current_state = np.copy(self.initial_state)
@@ -515,9 +514,8 @@ class CompositeSim:
                     self.gate_count += self.trotter_sim.gate_count
                 if ix == 1:
                     self.qdrift_sim.set_initial_state(current_state)
-                    current_state = self.qdrift_sim.simulate(sim_time, samples)
+                    current_state = self.qdrift_sim.simulate(sim_time, self.nb)
                     self.gate_count += self.qdrift_sim.gate_count
-        
         return current_state
             
     #Monte-Carlo sample the infidelity, should work for composite channel
@@ -559,15 +557,19 @@ class CompositeSim:
                 return 1
 
             #Binary search
+            break_flag_2 = False
             while lower_bound < upper_bound:
                 mid = 1+ (upper_bound - lower_bound)//2
                 infidelity = self.sample_channel_inf(time, samples, iterations, mcsamples)
                 if (self.sample_channel_inf(time, mid+3, iterations, mcsamples) < self.epsilon) and (self.sample_channel_inf(time, mid - 3, iterations, mcsamples) > self.epsilon): #Causing Problems
+                    break_flag_2 = True
                     break #calling the critical point the point where the second point on either side goes from a bad point to a good point (we are in the neighbourhood of the ideal gate count)
                 elif infidelity < self.epsilon:
                     upper_bound = mid - 1
                 else:
                     lower_bound = mid + 1
+            if break_flag_2 == False:
+                print("[sim_channel_performance] function did not find a good point")
             #Picking points to fit/interpolate
             for i in range (mid+1, mid +4):
                 infidelity = self.sample_channel_inf(time, i, iterations, mcsamples)
@@ -599,15 +601,20 @@ class CompositeSim:
                 return 1
 
             #Binary search
+            break_flag_2 = False
             while lower_bound < upper_bound:
                 mid = 1+ (upper_bound - lower_bound)//2
                 infidelity = self.sample_channel_inf(time, samples, mid, mcsamples)
                 if (self.sample_channel_inf(time, samples, mid + 3, mcsamples) < self.epsilon) and (self.sample_channel_inf(time, samples, mid - 3, mcsamples) > self.epsilon): #Causing Problems
+                    break_flag_2 = True
                     break #calling the critical point the point where the second point on either side goes from a bad point to a good point (we are in the neighbourhood of the ideal gate count)
                 elif infidelity < self.epsilon:
                     upper_bound = mid - 1
                 else:
                     lower_bound = mid + 1
+            if break_flag_2 == False:
+                print("[sim_channel_performance] function did not find a good point")
+                return 1
 
         for i in range (mid+1, mid +4):
             infidelity = self.sample_channel_inf(time, samples, i, mcsamples)
