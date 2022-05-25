@@ -3,13 +3,14 @@ from asyncore import loop
 from operator import matmul
 import numpy as np
 import matplotlib.pyplot as plt
+import statistics
 from scipy import linalg
 from scipy import optimize
 from scipy import interpolate
 import math
 from numpy import random
 import cmath
-import time
+import time as time_this
 from sqlalchemy import false
 from sympy import S, symbols, printing
 from skopt import gp_minimize
@@ -266,7 +267,7 @@ class CompositeSim:
         self.qdrift_sim = QDriftSimulator()
         self.trotter_sim = TrotterSim(order = inner_order)
 
-        self.nb = nb #number of Qdrift channel samples. Useful to define as an attribute if we are choosing whether or not to optimize over it.
+        self.nb = nb #number of Qdrift channel samples. Useful to define as an attribute if we are choosing whether or not to optimize over it. Only used in analytic cost optimization
         self.time = initial_time 
         self.gate_count = 0 #Used to keep track of the operators in analyse_sim
         self.gate_data = [] #used to access the gate counts in the notebook
@@ -275,6 +276,7 @@ class CompositeSim:
         self.initial_state = np.zeros((self.hilbert_dim, 1))
         self.initial_state[0] = 1.
         self.final_state = np.copy(self.initial_state)
+        self.unparsed_hamiltonian = np.copy(hamiltonian_list) #the unmodified input matrix
 
         self.prep_hamiltonian_lists(hamiltonian_list) #do we want this done before or after the partitioning?
         np.random.seed(self.rng_seed)
@@ -492,12 +494,30 @@ class CompositeSim:
         else:
             print("Invalid input for attribute 'partition' ")
             return 1
-
+    ##########################################################################################
+    #Simulation Section -- contains functions to call in the workbook to simulate hamiltonians
     def repartition(self):
         self.a_norms = []
         self.b_norms = []
         self.partitioning()
         self.reset_nested_sims()
+        return 0
+    
+    #a funciton to decide on a good number of monte carlo samples for the following simulation functions (avoid noise errors)
+    def sample_decider(self, time, samples, iterations, mc_sample_guess):
+        med_inf_samples = [1] #to prevent an error in the k loop, use 1 (maximum infidelity) so loop wont termiate
+        sample_guess = mc_sample_guess
+        for k in range(20):
+            inf_samples = []
+            for j in range(11):
+                inf_samples.append(self.sample_channel_inf(time, samples, iterations, sample_guess))
+            med_inf_samples.append(statistics.median(inf_samples))
+            print(np.abs((med_inf_samples[k] - med_inf_samples[k+1])))
+            if np.abs((med_inf_samples[k] - med_inf_samples[k+1])) < (0.1 * self.epsilon): #choice of precision
+                break
+            else:
+                sample_guess *= 2
+        return int(sample_guess/2)
 
     #Simulate and error scaling 
     def simulate(self, time, samples, iterations): 
@@ -520,15 +540,12 @@ class CompositeSim:
             
     #Monte-Carlo sample the infidelity, should work for composite channel
     def sample_channel_inf(self, time, samples, iterations, mcsamples): 
-        sample_fidelity = []
-        H = []
-        for i in range(len(self.spectral_norms)):
-            H.append(self.hamiltonian_list[i] * self.spectral_norms[i])
+        sample_fidelity = 0
         for s in range(mcsamples):
             sim_state = self.simulate(time, samples, iterations)
-            good_state = np.dot(linalg.expm(1j * sum(H) * time), self.initial_state)
-            sample_fidelity.append((np.abs(np.dot(good_state.conj().T, sim_state)))**2)
-        infidelity = 1- sum(sample_fidelity) / mcsamples 
+            good_state = np.dot(linalg.expm(1j * sum(self.unparsed_hamiltonian) * time), self.initial_state)
+            sample_fidelity += (np.abs(np.dot(good_state.conj().T, sim_state)))**2
+        infidelity = 1- (sample_fidelity / mcsamples) 
         return infidelity #this is of type array for some reason?
 
     #To analyse the number of gates required to meet a certain error threshold, function is guarenteed to work with iterations =1, but can be sped up by a better geuss.
@@ -560,23 +577,24 @@ class CompositeSim:
             break_flag_2 = False
             while lower_bound < upper_bound:
                 mid = 1+ (upper_bound - lower_bound)//2
-                infidelity = self.sample_channel_inf(time, samples, iterations, mcsamples)
-                if (self.sample_channel_inf(time, mid+3, iterations, mcsamples) < self.epsilon) and (self.sample_channel_inf(time, mid - 3, iterations, mcsamples) > self.epsilon): #Causing Problems
+                infidelity = self.sample_channel_inf(time, mid, iterations, mcsamples)
+                inf_plus = []
+                inf_minus = []
+                for n in range(7):
+                    inf_plus.append(self.sample_channel_inf(time, mid +2, iterations, mcsamples))
+                    inf_minus.append(self.sample_channel_inf(time, mid -2, iterations, mcsamples))
+                med_inf_plus = statistics.median(inf_plus)
+                med_inf_minus = statistics.median(inf_minus)
+                if (med_inf_plus < self.epsilon) and (med_inf_minus > self.epsilon): #Causing Problems
                     break_flag_2 = True
                     break #calling the critical point the point where the second point on either side goes from a bad point to a good point (we are in the neighbourhood of the ideal gate count)
-                elif infidelity < self.epsilon:
+                elif med_inf_plus < self.epsilon:
                     upper_bound = mid - 1
                 else:
                     lower_bound = mid + 1
             if break_flag_2 == False:
                 print("[sim_channel_performance] function did not find a good point")
-            #Picking points to fit/interpolate
-            for i in range (mid+1, mid +4):
-                infidelity = self.sample_channel_inf(time, i, iterations, mcsamples)
-                good_inf.append([self.gate_count, float(infidelity)])
-            for j in range (mid-3, mid +1):
-                infidelity = self.sample_channel_inf(time, j, iterations, mcsamples)
-                bad_inf.append([self.gate_count, float(infidelity)])
+                return 1
         
         #For general partitions we want to increase iterations not samples
         else:
@@ -599,16 +617,25 @@ class CompositeSim:
             if break_flag == False :
                 print("[sim_channel_performance] maximum number of iterations hit, something is probably off")
                 return 1
+            print(upper_bound)
 
             #Binary search
             break_flag_2 = False
             while lower_bound < upper_bound:
                 mid = 1+ (upper_bound - lower_bound)//2
                 infidelity = self.sample_channel_inf(time, samples, mid, mcsamples)
-                if (self.sample_channel_inf(time, samples, mid + 3, mcsamples) < self.epsilon) and (self.sample_channel_inf(time, samples, mid - 3, mcsamples) > self.epsilon): #Causing Problems
+                inf_plus = []
+                inf_minus = []
+                for n in range(9):
+                    inf_plus.append(self.sample_channel_inf(time, samples, mid + 2, mcsamples))
+                    inf_minus.append(self.sample_channel_inf(time, samples, mid - 2, mcsamples))
+                med_inf_plus = statistics.median(inf_plus)
+                med_inf_minus = statistics.median(inf_minus)
+                print((med_inf_minus - self.epsilon, self.epsilon - med_inf_plus))
+                if (med_inf_plus < self.epsilon) and (med_inf_minus > self.epsilon): #Causing Problems
                     break_flag_2 = True
                     break #calling the critical point the point where the second point on either side goes from a bad point to a good point (we are in the neighbourhood of the ideal gate count)
-                elif infidelity < self.epsilon:
+                elif med_inf_plus < self.epsilon:
                     upper_bound = mid - 1
                 else:
                     lower_bound = mid + 1
@@ -616,10 +643,10 @@ class CompositeSim:
                 print("[sim_channel_performance] function did not find a good point")
                 return 1
 
-        for i in range (mid+1, mid +4):
+        for i in range (mid+1, mid +3):
             infidelity = self.sample_channel_inf(time, samples, i, mcsamples)
             good_inf.append([self.gate_count, float(infidelity)])
-        for j in range (mid-3, mid +1):
+        for j in range (mid-2, mid +1):
             infidelity = self.sample_channel_inf(time, samples, j, mcsamples)
             bad_inf.append([self.gate_count, float(infidelity)])
         #Store the points to interpolate
@@ -627,6 +654,6 @@ class CompositeSim:
         bad_inf = np.array(bad_inf)
         self.gate_data = np.concatenate((bad_inf, good_inf), 0)
         #print(self.gate_data)
-        
+
         fit = np.poly1d(np.polyfit(self.gate_data[:,1], self.gate_data[:,0], 1)) #linear best fit 
         return fit(self.epsilon)
