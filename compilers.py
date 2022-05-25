@@ -505,15 +505,12 @@ class CompositeSim:
     
     #a funciton to decide on a good number of monte carlo samples for the following simulation functions (avoid noise errors)
     def sample_decider(self, time, samples, iterations, mc_sample_guess):
-        med_inf_samples = [1] #to prevent an error in the k loop, use 1 (maximum infidelity) so loop wont termiate
         sample_guess = mc_sample_guess
-        for k in range(20):
-            inf_samples = []
-            for j in range(11):
-                inf_samples.append(self.sample_channel_inf(time, samples, iterations, sample_guess))
-            med_inf_samples.append(statistics.median(inf_samples))
-            print(np.abs((med_inf_samples[k] - med_inf_samples[k+1])))
-            if np.abs((med_inf_samples[k] - med_inf_samples[k+1])) < (0.1 * self.epsilon): #choice of precision
+        inf_samples = [1, 0]
+        for k in range(1, 25):
+            inf_samples[k%2] = self.sample_channel_inf(time, samples, iterations, sample_guess)
+            print(inf_samples)
+            if np.abs((inf_samples[0] - inf_samples[1])) < (0.05 * self.epsilon): #choice of precision
                 break
             else:
                 sample_guess *= 2
@@ -576,7 +573,7 @@ class CompositeSim:
             #Binary search
             break_flag_2 = False
             while lower_bound < upper_bound:
-                mid = 1+ (upper_bound - lower_bound)//2
+                mid = lower_bound + (upper_bound - lower_bound)//2
                 infidelity = self.sample_channel_inf(time, mid, iterations, mcsamples)
                 inf_plus = []
                 inf_minus = []
@@ -617,21 +614,21 @@ class CompositeSim:
             if break_flag == False :
                 print("[sim_channel_performance] maximum number of iterations hit, something is probably off")
                 return 1
-            print(upper_bound)
+            print("the upper bound is " + str(upper_bound))
 
             #Binary search
             break_flag_2 = False
             while lower_bound < upper_bound:
-                mid = 1+ (upper_bound - lower_bound)//2
-                infidelity = self.sample_channel_inf(time, samples, mid, mcsamples)
+                mid = lower_bound+ (upper_bound - lower_bound)//2
                 inf_plus = []
                 inf_minus = []
-                for n in range(9):
+                for n in range(3):
                     inf_plus.append(self.sample_channel_inf(time, samples, mid + 2, mcsamples))
                     inf_minus.append(self.sample_channel_inf(time, samples, mid - 2, mcsamples))
                 med_inf_plus = statistics.median(inf_plus)
                 med_inf_minus = statistics.median(inf_minus)
-                print((med_inf_minus - self.epsilon, self.epsilon - med_inf_plus))
+                print((med_inf_minus - self.epsilon, self.epsilon - med_inf_plus, upper_bound, lower_bound))
+                
                 if (med_inf_plus < self.epsilon) and (med_inf_minus > self.epsilon): #Causing Problems
                     break_flag_2 = True
                     break #calling the critical point the point where the second point on either side goes from a bad point to a good point (we are in the neighbourhood of the ideal gate count)
