@@ -1,5 +1,6 @@
 from ast import And
 from asyncore import loop
+from mimetypes import init
 from operator import matmul
 import numpy as np
 import matplotlib.pyplot as plt
@@ -16,19 +17,124 @@ from sympy import S, symbols, printing
 from skopt import gp_minimize
 
 FLOATING_POINT_PRECISION = 1e-10
+MC_SAMPLES_DEFAULT=100
 
+# Inputs are self explanatory except simulator which can be any of 
+# TrotterSim, QDriftSim, CompositeSim
+# Outputs: a single shot estimate of the infidelity according to the exact output provided. 
+def single_infidelity_sample(simulator, time, exact_output, iterations = 1, nbsamples = 1):
+    simulator.reset_init_state()
+    sim_output = []
+
+    if type(simulator) == QDriftSim:
+        sim_output = simulator.simulate(time, nbsamples)
+    
+    if type(simulator) == TrotterSim:
+        sim_output = simulator.simulate(time, iterations)
+    
+    if type(simulator) == CompositeSim:
+        sim_output = simulator.simulate(time, nbsamples, iterations)
+
+    infidelity = 1 - (np.abs(np.dot(exact_output.conj().T, sim_output)).flat[0])**2
+    return (infidelity, simulator.gate_count)
+
+def mutli_infidelity_sample(simulator, time, exact_output, iterations=1, nbsamples=1, mc_samples=MC_SAMPLES_DEFAULT):
+    ret = []
+
+    # No need to sample TrotterSim, just return single element list
+    if type(simulator) == TrotterSim:
+        ret.append(single_infidelity_sample(simulator, time, exact_output, iterations=iterations, nbsamples=nbsamples))
+        ret *= mc_samples
+    else:
+        for samp in range(mc_samples):
+            ret.append(single_infidelity_sample(simulator, time, exact_output, iterations=iterations, nbsamples=nbsamples))
+
+    return ret
+
+def is_threshold_met(infidelities, threshold):
+    mean = np.mean(infidelities)
+    std_dev = np.std(infidelities)
+
+    if threshold > mean + 2 * std_dev:
+        return True
+    else:
+        return False
+
+def exact_time_evolution(hamiltonian_list, time, initial_state):
+    if len(hamiltonian_list) == 0:
+        print("[exact_time_evolution] pls give me hamiltonian")
+        return 1
+
+    return linalg.expm(1j * sum(hamiltonian_list) * time) @ initial_state
+
+
+def find_optimal_iterations(simulator, hamiltonian_list, time=1., infidelity_threshold=0.05, mc_samples=MC_SAMPLES_DEFAULT):
+    if len(hamiltonian_list) == 0:
+        print("[find_optimal_iterations] no hamiltonian terms provided?")
+        return 1
+    
+    initial_state = np.zeros((hamiltonian_list[0].shape[0]))
+    initial_state[0] = 1.
+    # TODO SET SIMS TO USE initiail_state
+    exact_final_state = exact_time_evolution(hamiltonian_list, time, initial_state=initial_state)
+
+    # now we can simplify infidelity to nice lambda, NOTE THIS IS TUPLE 
+    if type(simulator) == TrotterSim or type(simulator) == CompositeSim:
+        get_inf = lambda x: mutli_infidelity_sample(simulator, time, exact_final_state, iterations = x, mc_samples=mc_samples)
+    elif type(simulator) == QDriftSim:
+        get_inf = lambda x: mutli_infidelity_sample(simulator, time, exact_final_state, nbsamples= x, mc_samples=mc_samples)
+
+    # compute reasonable upper and lower bounds
+    iter_lower = 1
+    iter_upper = 2 ** 20
+    # print("[find_optimal_iterations] finding bounds")
+    for n in range(20):
+        # print("[find_optimal_iterations] n: ", n)
+        inf_tup, costs = zip(*get_inf(2 ** n))
+        inf_list = list(inf_tup)
+        # print("[find_optimal_iterations] mean infidelity:", np.mean(inf_list))
+
+        if is_threshold_met(inf_list, infidelity_threshold) == False:
+            iter_lower = 2 ** n
+        else:
+            iter_upper = 2 ** n
+            break
+
+    # bisection search until we find it.
+    mid = 1
+    count = 0
+    current_inf = (1., 1)
+    print("[find_optimal_iterations] beginning search with lower, upper:", iter_lower, iter_upper)
+    while iter_upper - iter_lower  > 1 and count < 30:
+        count += 1
+        mid = (iter_upper + iter_lower) / 2.0
+        iters = math.ceil(mid)
+        # print("[find_optimal_iterations] count:", count, ", upper:",iter_upper, ", lower: ", iter_lower, ", mid:", mid)
+        
+        inf_tup, costs = zip(*get_inf(iters))
+        infidelities = list(inf_tup)
+        # print("[find_optimal_iterations] current_inf:", np.mean(infidelities))
+        if is_threshold_met(infidelities, infidelity_threshold):
+            iter_lower = iters
+        else:
+            iter_upper = iters
+    ret = get_inf(iter_upper)
+    inf_tup, costs = zip(*ret)
+    print("[find_optimal_iterations] iters:", iter_upper, ", inf_mean: ", np.mean(list(inf_tup)), " +- (", np.std(list(inf_tup)), ")")
+    print("[find_optimal_iterations] Average cost:", np.mean(list(costs)))
+    return get_inf(iter_upper)
 # Helper function to compute the timesteps to matrix exponentials in a higher order
 # product formula. This can be done with only the length of an array, the time, and
 # the order of the simulator needed. Returns a list of tuples of the form (index, time),
 # where index refers to which hamiltonian term at that step and time refers to the scaled time.
 # Assumes your list is of the form [H_1, H_2, ... H_numTerms] 
 # For example if you want to do e^{i H_3 t} e^{i H_2 t} e^{i H_1 t} | psi >, then calling this with
-# computeTrotterTimesteps(3, t, 1) will return [(0, t), (1, t), (2, t)] where we assume your
+# compute_trotter_timesteps(3, t, 1) will return [(0, t), (1, t), (2, t)] where we assume your
 # Hamiltonian terms are stored like [H_1, H_2, H_3] and we return the index
 # Note the reverse ordering due to matrix multiplication :'( 
-def computeTrotterTimesteps(numTerms, simTime, trotterOrder = 1):
+def compute_trotter_timesteps(numTerms, simTime, trotterOrder = 1):
     if type(trotterOrder) != type(1):
-        print('[computeTrotterTimesteps] trotterOrder input is not an int')
+        print('[compute_trotter_timesteps] trotterOrder input is not an int')
         return 1
 
     if trotterOrder == 1:
@@ -36,7 +142,7 @@ def computeTrotterTimesteps(numTerms, simTime, trotterOrder = 1):
 
     elif trotterOrder == 2:
         ret = []
-        firstOrder = computeTrotterTimesteps(numTerms, simTime / 2.0, 1)
+        firstOrder = compute_trotter_timesteps(numTerms, simTime / 2.0, 1)
         ret += firstOrder.copy()
         firstOrder.reverse()
         ret += firstOrder
@@ -44,13 +150,13 @@ def computeTrotterTimesteps(numTerms, simTime, trotterOrder = 1):
 
     elif trotterOrder % 2 == 0:
         timeConst = 1.0/(4 - 4**(1.0 / (trotterOrder - 1)))
-        outer = computeTrotterTimesteps(numTerms, timeConst * simTime, trotterOrder - 2)
-        inner = computeTrotterTimesteps(numTerms, (1. - 4. * timeConst) * simTime, trotterOrder - 2)
+        outer = compute_trotter_timesteps(numTerms, timeConst * simTime, trotterOrder - 2)
+        inner = compute_trotter_timesteps(numTerms, (1. - 4. * timeConst) * simTime, trotterOrder - 2)
         ret = [] + 2 * outer + inner + 2 * outer
         return ret
 
     else:
-        print("[computeTrotterTimesteps] trotterOrder seems to be bad")
+        print("[compute_trotter_timesteps] trotterOrder seems to be bad")
         return 1
 
 # A basic trotter simulator organizer.
@@ -102,12 +208,25 @@ class TrotterSim:
             return 1
         self.hamiltonian_list = mat_list
         self.spectral_norms = norm_list
+    
+    def get_hamiltonian_list(self):
+        ret = []
+        for ix in range(len(self.hamiltonian_list)):
+            ret.append(np.copy(self.hamiltonian_list[ix]) * self.spectral_norms[ix])
+        return ret
 
     # Do some sanity checking before storing. Check if input is proper dimensions and an actual
     # quantum state.
     def set_initial_state(self, psi_init):
         self.initial_state = psi_init
 
+    def reset_init_state(self):
+        if len(self.hamiltonian_list) > 0:
+            self.initial_state = np.zeros((self.hamiltonian_list[0].shape[0]))
+            self.initial_state[0] = 1.
+        else:
+            print("[TrotterSim.reset_init_state] I don't have any dimensions")
+        
                              
     def simulate(self, time, iterations):
         self.gate_count = 0
@@ -115,7 +234,7 @@ class TrotterSim:
             return np.copy(self.initial_state)
 
         op_time = time/iterations
-        steps = computeTrotterTimesteps(len(self.hamiltonian_list), op_time, self.order) 
+        steps = compute_trotter_timesteps(len(self.hamiltonian_list), op_time, self.order) 
         psi = self.initial_state
         for (ix, timestep) in steps * iterations: 
             psi = linalg.expm(1j * self.hamiltonian_list[ix] * self.spectral_norms[ix] * timestep) @ psi
@@ -125,7 +244,7 @@ class TrotterSim:
     def infidelity(self, time, iterations):
         H = []
         for i in range(len(self.spectral_norms)):
-            H.append(self.hamiltonian_list[i] * self.spectral_norms[i]) #This might be the error
+            H.append(self.hamiltonian_list[i] * self.spectral_norms[i]) 
         sim_state = self.simulate(time, iterations)
         good_state = np.dot(linalg.expm(1j * sum(H) * time), self.initial_state)
         #infidelity = 1 - (np.abs(np.dot(good_state.conj().T, sim_state)))**2
@@ -145,7 +264,7 @@ class TrotterSim:
 #            exponetial is applied with time replaced by time*sum(spectral_norms)/big_N.
 # - rng_seed: Seed for the random number generator so results are reproducible.
     
-class QDriftSimulator:
+class QDriftSim:
     def __init__(self, hamiltonian_list = [], rng_seed = 1):
         self.hamiltonian_list = []
         self.spectral_norms = []
@@ -174,11 +293,24 @@ class QDriftSimulator:
             self.spectral_norms.append(temp_norm)
             self.hamiltonian_list.append(h / temp_norm)
         return 0
+    
+    def get_hamiltonian_list(self):
+        ret = []
+        for ix in range(len(self.hamiltonian_list)):
+            ret.append(np.copy(self.hamiltonian_list[ix]) * self.spectral_norms[ix])
+        return ret
 
     # Do some sanity checking before storing. Check if input is proper dimensions and an actual
     # quantum state.
     def set_initial_state(self, psi_init):
         self.initial_state = psi_init
+
+    def reset_init_state(self):
+        if len(self.hamiltonian_list) > 0:
+            self.initial_state = np.zeros((self.hamiltonian_list[0].shape[0]))
+            self.initial_state[0] = 1.
+        else:
+            print("[qdrift_sim reset_init_state] I have no dims")
 
     # Assumes terms are already normalized
     def set_hamiltonian(self, mat_list = [], norm_list = []):
@@ -264,7 +396,7 @@ class CompositeSim:
         self.epsilon = epsilon #simulation error
         self.weight_threshold = weight_threshold
 
-        self.qdrift_sim = QDriftSimulator()
+        self.qdrift_sim = QDriftSim()
         self.trotter_sim = TrotterSim(order = inner_order)
 
         self.nb = nb #number of Qdrift channel samples. Useful to define as an attribute if we are choosing whether or not to optimize over it. Only used in analytic cost optimization
@@ -300,10 +432,17 @@ class CompositeSim:
             self.hamiltonian_list.append(h / temp_norm)
         return 0
 
+    def get_hamiltonian_list(self):
+        ret = []
+        for ix in range(len(self.hamiltonian_list)):
+            ret.append(np.copy(self.hamiltonian_list[ix]) * self.spectral_norms[ix])
+        return ret
 
-    def set_initial_state(self, psi_init):
-        self.initial_state = psi_init
-        return 0
+    def reset_init_state(self):
+        self.initial_state = np.zeros((self.hilbert_dim, 1))
+        self.initial_state[0] = 1.
+        self.trotter_sim.reset_init_state()
+        self.qdrift_sim.reset_init_state()
 
     # Prep simulators with terms, isolated as function for reusability in partitioning
     def reset_nested_sims(self):
@@ -503,7 +642,7 @@ class CompositeSim:
         self.reset_nested_sims()
         return 0
     
-    #a funciton to decide on a good number of monte carlo samples for the following simulation functions (avoid noise errors)
+    #a function to decide on a good number of monte carlo samples for the following simulation functions (avoid noise errors)
     def sample_decider(self, time, samples, iterations, mc_sample_guess):
         med_inf_samples = [1] #to prevent an error in the k loop, use 1 (maximum infidelity) so loop wont termiate
         sample_guess = mc_sample_guess
@@ -524,10 +663,11 @@ class CompositeSim:
         if (self.nb_optimizer == False) and (self.partition != 'prob'): 
             self.nb = samples  #specifying the number of samples having optimized Nb does nothing
         self.gate_count = 0
-        channel_visits = computeTrotterTimesteps(2, time / (1. * iterations), self.outer_order)
+        outer_loop_timesteps = compute_trotter_timesteps(2, time / (1. * iterations), self.outer_order)
+        self.reset_init_state()
         current_state = np.copy(self.initial_state)
         for i in range(iterations):
-            for (ix, sim_time) in channel_visits:
+            for (ix, sim_time) in outer_loop_timesteps:
                 if ix == 0:
                     self.trotter_sim.set_initial_state(current_state)
                     current_state = self.trotter_sim.simulate(sim_time, 1)
@@ -552,7 +692,7 @@ class CompositeSim:
     def sim_channel_performance(self, time, samples, iterations, mcsamples): #This function is not robust due to mc noise 
         good_inf = []
         bad_inf = []
-
+    
         if self.partition == 'qdrift':
             lower_bound = samples
             #Exponential search to set upper bound, then binary search in that interval
@@ -657,3 +797,4 @@ class CompositeSim:
 
         fit = np.poly1d(np.polyfit(self.gate_data[:,1], self.gate_data[:,0], 1)) #linear best fit 
         return fit(self.epsilon)
+

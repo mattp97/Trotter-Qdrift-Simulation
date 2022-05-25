@@ -2,3 +2,4 @@ Pipfile
 Pipfile.lock
 venv/
 matt_squared/
+__pycache__/compilers.cpython-39.pyc
