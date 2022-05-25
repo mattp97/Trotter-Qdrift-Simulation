@@ -800,3 +800,4 @@ class CompositeSim:
         fit = np.poly1d(np.polyfit(self.gate_data[:,1], self.gate_data[:,0], 1)) #linear best fit 
         return fit(self.epsilon)
 
+print("test")
