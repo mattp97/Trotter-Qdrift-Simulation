@@ -14,6 +14,7 @@ import time as time_this
 from sqlalchemy import false
 from sympy import S, symbols, printing
 from skopt import gp_minimize
+from skopt import gbrt_minimize
 
 FLOATING_POINT_PRECISION = 1e-10
 
@@ -561,11 +562,13 @@ class CompositeSim:
             upper_bound = samples
             break_flag = False
             for n in range(20):
-                infidelity = self.sample_channel_inf(time, upper_bound, iterations, mcsamples)
-                upper_bound *=2 
+                infidelity = self.sample_channel_inf(time, upper_bound, iterations, mcsamples) 
+                print(infidelity, upper_bound)
                 if infidelity < self.epsilon:
                     break_flag = True
                     break
+                else:
+                    upper_bound *=2
             if break_flag == False :
                 print("[sim_channel_performance] maximum number of iterations hit, something is probably off")
                 return 1
@@ -606,11 +609,13 @@ class CompositeSim:
             upper_bound = iterations
             break_flag = False
             for n in range(20):
-                infidelity = self.sample_channel_inf(time, samples, upper_bound, mcsamples)
-                upper_bound *= 2 
+                infidelity = self.sample_channel_inf(time, samples, upper_bound, mcsamples) 
                 if infidelity < self.epsilon:
                     break_flag = True
                     break
+                else:
+                    upper_bound *= 2
+
             if break_flag == False :
                 print("[sim_channel_performance] maximum number of iterations hit, something is probably off")
                 return 1
