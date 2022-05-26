@@ -225,8 +225,8 @@ class TrotterSim:
         if len(self.hamiltonian_list) > 0:
             self.initial_state = np.zeros((self.hamiltonian_list[0].shape[0]))
             self.initial_state[0] = 1.
-        else:
-            print("[TrotterSim.reset_init_state] I don't have any dimensions")
+        #else:
+            #print("[TrotterSim.reset_init_state] I don't have any dimensions")
         
                              
     def simulate(self, time, iterations):
@@ -310,8 +310,8 @@ class QDriftSim:
         if len(self.hamiltonian_list) > 0:
             self.initial_state = np.zeros((self.hamiltonian_list[0].shape[0]))
             self.initial_state[0] = 1.
-        else:
-            print("[qdrift_sim reset_init_state] I have no dims")
+        #else:
+            #print("[qdrift_sim reset_init_state] I have no dims")
 
     # Assumes terms are already normalized
     def set_hamiltonian(self, mat_list = [], norm_list = []):
@@ -636,6 +636,8 @@ class CompositeSim:
             return 1
     ##########################################################################################
     #Simulation Section -- contains functions to call in the workbook to simulate hamiltonians
+    
+    #A function that repartitions the hamiltonian. Ideally to be called when iterating simulate over timesteps
     def repartition(self):
         self.a_norms = []
         self.b_norms = []
@@ -645,10 +647,11 @@ class CompositeSim:
     
     #a function to decide on a good number of monte carlo samples for the following simulation functions (avoid noise errors)
     def sample_decider(self, time, samples, iterations, mc_sample_guess):
+        exact_state = exact_time_evolution(self.unparsed_hamiltonian, time, self.initial_state)
         sample_guess = mc_sample_guess
         inf_samples = [1, 0]
         for k in range(1, 25):
-            inf_samples[k%2] = self.sample_channel_inf(time, samples, iterations, sample_guess)
+            inf_samples[k%2] = self.sample_channel_inf(time, samples, iterations, sample_guess, exact_state)
             print(inf_samples)
             if np.abs((inf_samples[0] - inf_samples[1])) < (0.05 * self.epsilon): #choice of precision
                 break
@@ -676,127 +679,92 @@ class CompositeSim:
                     self.gate_count += self.qdrift_sim.gate_count
         return current_state
             
-    #Monte-Carlo sample the infidelity, should work for composite channel
-    def sample_channel_inf(self, time, samples, iterations, mcsamples): 
+    # A function that uses Monte-Carlo sampling to approximate the infidelity. If evaluating a Trotter channel, mcsamples should be set to 1.
+    def sample_channel_inf(self, time, samples, iterations, mcsamples, exact_state): 
         sample_fidelity = 0
         for s in range(mcsamples):
             sim_state = self.simulate(time, samples, iterations)
-            good_state = np.dot(linalg.expm(1j * sum(self.unparsed_hamiltonian) * time), self.initial_state)
-            sample_fidelity += (np.abs(np.dot(good_state.conj().T, sim_state)))**2
+            sample_fidelity += (np.abs(np.dot(exact_state.conj().T, sim_state).flat[0]))**2
         infidelity = 1- (sample_fidelity / mcsamples) 
         return infidelity #this is of type array for some reason?
 
-    #To analyse the number of gates required to meet a certain error threshold, function is guarenteed to work with iterations =1, but can be sped up by a better geuss.
+    # A function to analyse the cost of a simulation with a certain error tolerance. The funciton is expensive -- it searches for the point 
+    # (the number of iterations or samples) at which the error tolerance is met, and does so with an exponential then binary search,
+    # followed by a linear interpolation.
     def sim_channel_performance(self, time, samples, iterations, mcsamples): #This function is not robust due to mc noise 
         good_inf = []
         bad_inf = []
-    
-        if self.partition == 'qdrift':
+        exact_state = exact_time_evolution(self.unparsed_hamiltonian, time, self.initial_state)
+        if self.partition == "qdrift":
+            get_inf = lambda x: self.sample_channel_inf(time, samples = x, iterations = 1, mcsamples = mcsamples, exact_state = exact_state)
+            median_samples = 1
             lower_bound = samples
-            #Exponential search to set upper bound, then binary search in that interval
-            infidelity = self.sample_channel_inf(time, samples, iterations, mcsamples)
-            if infidelity < self.epsilon:
-                print("[sim_channel_performance] Samples too large, already below error threshold")
-                return 1
-            # Iterate up until some max cutoff
             upper_bound = samples
-            break_flag = False
-            for n in range(20):
-                infidelity = self.sample_channel_inf(time, upper_bound, iterations, mcsamples) 
-                print(infidelity, upper_bound)
-                if infidelity < self.epsilon:
-                    break_flag = True
-                    break
-                else:
-                    upper_bound *=2
-            if break_flag == False :
-                print("[sim_channel_performance] maximum number of iterations hit, something is probably off")
-                return 1
-
-            #Binary search
-            break_flag_2 = False
-            while lower_bound < upper_bound:
-                mid = lower_bound + (upper_bound - lower_bound)//2
-                infidelity = self.sample_channel_inf(time, mid, iterations, mcsamples)
-                inf_plus = []
-                inf_minus = []
-                for n in range(7):
-                    inf_plus.append(self.sample_channel_inf(time, mid +2, iterations, mcsamples))
-                    inf_minus.append(self.sample_channel_inf(time, mid -2, iterations, mcsamples))
-                med_inf_plus = statistics.median(inf_plus)
-                med_inf_minus = statistics.median(inf_minus)
-                if (med_inf_plus < self.epsilon) and (med_inf_minus > self.epsilon): #Causing Problems
-                    break_flag_2 = True
-                    break #calling the critical point the point where the second point on either side goes from a bad point to a good point (we are in the neighbourhood of the ideal gate count)
-                elif med_inf_plus < self.epsilon:
-                    upper_bound = mid - 1
-                else:
-                    lower_bound = mid + 1
-            if break_flag_2 == False:
-                print("[sim_channel_performance] function did not find a good point")
-                return 1
-        
-        #For general partitions we want to increase iterations not samples
-        else:
+        elif self.partition == "trotter":
+            get_inf = lambda x: self.sample_channel_inf(time, samples =1, iterations = x, mcsamples = 1, exact_state = exact_state)
+            median_samples = 1
             lower_bound = iterations
-            #Exponential search to set upper bound, then binary search in that interval
-            infidelity = self.sample_channel_inf(time, samples, lower_bound, mcsamples)
-
-            if infidelity < self.epsilon:
-                print("[sim_channel_performance] Iterations too large, already below error threshold")
-                return 1
-            # Iterate up until some max cutoff
             upper_bound = iterations
-            break_flag = False
-            for n in range(20):
-                infidelity = self.sample_channel_inf(time, samples, upper_bound, mcsamples) 
-                if infidelity < self.epsilon:
-                    break_flag = True
-                    break
-                else:
-                    upper_bound *= 2
+        else:
+            get_inf = lambda x: self.sample_channel_inf(time, samples = samples, iterations = x, mcsamples = 1, exact_state = exact_state)
+            median_samples = 1
+            lower_bound = iterations
+            upper_bound = iterations
+        
+        #Exponential search to set upper bound, then binary search in that interval
+        infidelity = get_inf(lower_bound)
+        if infidelity < self.epsilon:
+            print("[sim_channel_performance] Iterations too large, already below error threshold")
+            return 1
+        # Iterate up until some max cutoff
+        break_flag = False
+        for n in range(20):
+            infidelity = get_inf(upper_bound) 
+            if infidelity < self.epsilon:
+                break_flag = True
+                break
+            else:
+                upper_bound *= 2
+        if break_flag == False :
+            print("[sim_channel_performance] maximum number of iterations hit, something is probably off")
+            return 1
+        print("the upper bound is " + str(upper_bound))
 
-            if break_flag == False :
-                print("[sim_channel_performance] maximum number of iterations hit, something is probably off")
-                return 1
-            print("the upper bound is " + str(upper_bound))
+        #Binary search
+        break_flag_2 = False
+        while lower_bound < upper_bound:
+            mid = lower_bound+ (upper_bound - lower_bound)//2
+            inf_plus = []
+            inf_minus = []
+            for n in range(median_samples):
+                inf_plus.append(get_inf(mid+2))
+                inf_minus.append(get_inf(mid-2))
+            med_inf_plus = statistics.median(inf_plus)
+            med_inf_minus = statistics.median(inf_minus)
+            print((med_inf_minus - self.epsilon, self.epsilon - med_inf_plus, upper_bound, lower_bound))
+            if (med_inf_plus < self.epsilon) and (med_inf_minus > self.epsilon): #Causing Problems
+                break_flag_2 = True
+                break #calling the critical point the point where the second point on either side goes from a bad point to a good point (we are in the neighbourhood of the ideal gate count)
+            elif med_inf_plus < self.epsilon:
+                upper_bound = mid - 1
+            else:
+                lower_bound = mid + 1
+        if break_flag_2 == False:
+            print("[sim_channel_performance] function did not find a good point")
+            return 1
 
-            #Binary search
-            break_flag_2 = False
-            while lower_bound < upper_bound:
-                mid = lower_bound+ (upper_bound - lower_bound)//2
-                inf_plus = []
-                inf_minus = []
-                for n in range(3):
-                    inf_plus.append(self.sample_channel_inf(time, samples, mid + 2, mcsamples))
-                    inf_minus.append(self.sample_channel_inf(time, samples, mid - 2, mcsamples))
-                med_inf_plus = statistics.median(inf_plus)
-                med_inf_minus = statistics.median(inf_minus)
-                print((med_inf_minus - self.epsilon, self.epsilon - med_inf_plus, upper_bound, lower_bound))
-                
-                if (med_inf_plus < self.epsilon) and (med_inf_minus > self.epsilon): #Causing Problems
-                    break_flag_2 = True
-                    break #calling the critical point the point where the second point on either side goes from a bad point to a good point (we are in the neighbourhood of the ideal gate count)
-                elif med_inf_plus < self.epsilon:
-                    upper_bound = mid - 1
-                else:
-                    lower_bound = mid + 1
-            if break_flag_2 == False:
-                print("[sim_channel_performance] function did not find a good point")
-                return 1
-
+        #Compute some surrounding points and interpolate
         for i in range (mid+1, mid +3):
-            infidelity = self.sample_channel_inf(time, samples, i, mcsamples)
+            infidelity = get_inf(i)
             good_inf.append([self.gate_count, float(infidelity)])
         for j in range (mid-2, mid +1):
-            infidelity = self.sample_channel_inf(time, samples, j, mcsamples)
+            infidelity = get_inf(j)
             bad_inf.append([self.gate_count, float(infidelity)])
         #Store the points to interpolate
         good_inf = np.array(good_inf)
         bad_inf = np.array(bad_inf)
         self.gate_data = np.concatenate((bad_inf, good_inf), 0)
         #print(self.gate_data)
-
         fit = np.poly1d(np.polyfit(self.gate_data[:,1], self.gate_data[:,0], 1)) #linear best fit 
         return fit(self.epsilon)
 
