@@ -271,6 +271,7 @@ class QDriftSim:
         self.spectral_norms = []
         self.rng_seed = rng_seed
         self.gate_count = 0
+        self.exp_op_cache = dict()
 
         # Use the first computational basis state as the initial state until the user specifies.
         if len(hamiltonian_list) == 0:
@@ -322,30 +323,48 @@ class QDriftSim:
         self.spectral_norms = norm_list
 
     # RETURNS A 0 BASED INDEX TO BE USED IN CODE!!
-    def draw_hamiltonian_sample(self):
-        sample = np.random.random()
-        tot = 0.
-        lamb = np.sum(self.spectral_norms)
-        for ix in range(len(self.spectral_norms)):
-            if sample > tot and sample < tot + self.spectral_norms[ix] / lamb:
-                index = ix
-                break
-            tot += self.spectral_norms[ix] / lamb
-        return index
+    def draw_hamiltonian_samples(self, num_samples):
+        samples = []
+        for i in range(num_samples):
+            sample = np.random.random()
+            tot = 0.
+            lamb = np.sum(self.spectral_norms)
+            for ix in range(len(self.spectral_norms)):
+                if sample > tot and sample < tot + self.spectral_norms[ix] / lamb:
+                    index = ix
+                    break
+                tot += self.spectral_norms[ix] / lamb
+            samples.append(index)
+        return samples
 
     def simulate(self, time, samples):
         self.gate_count = 0
         evol_op = np.identity(len(self.initial_state))
+        if "time" in self.exp_op_cache:
+            if self.exp_op_cache["time"] - time > FLOATING_POINT_PRECISION:
+                self.exp_op_cache.clear()
+                # WARNING: potential could allow for "time creep", by adjusting time 
+                # in multiple instances of FLOATING POINT PRECISION it could slowly
+                # drift from the time that the exponential operators used
+                self.exp_op_cache["time"] = time
+        else:
+            self.exp_op_cache.clear()
+            self.exp_op_cache["time"] = time
+
 
         if len(self.hamiltonian_list) == 0:
             return np.copy(self.initial_state)
 
         tau = time * np.sum(self.spectral_norms) / (samples * 1.0)
         final = np.copy(self.initial_state)
-        for n in range(samples):
-            ix = self.draw_hamiltonian_sample()
-            exp_h = linalg.expm(1.j * tau * self.hamiltonian_list[ix])
-            final = exp_h @ final
+        obtained_samples = self.draw_hamiltonian_samples(samples)
+        for ix in obtained_samples:
+            if ix in self.exp_op_cache:
+                final = self.exp_op_cache.get(ix) @ final
+            else:
+                exp_h = linalg.expm(1.j * tau * self.hamiltonian_list[ix])
+                final = exp_h @ final
+                self.exp_op_cache[ix] = exp_h
         self.final_state = final
         self.gate_count = samples
         return np.copy(self.final_state)
