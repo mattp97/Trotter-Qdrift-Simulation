@@ -323,7 +323,18 @@ class QDriftSim:
         self.spectral_norms = norm_list
 
     # RETURNS A 0 BASED INDEX TO BE USED IN CODE!!
-    def draw_hamiltonian_samples(self, num_samples):
+    def draw_hamiltonian_sample(self):
+        sample = np.random.random()
+        tot = 0.
+        lamb = np.sum(self.spectral_norms)
+        for ix in range(len(self.spectral_norms)):
+            if sample > tot and sample < tot + self.spectral_norms[ix] / lamb:
+                index = ix
+                break
+            tot += self.spectral_norms[ix] / lamb
+        return index
+
+    def draw_hamiltonian_samples2(self, num_samples):
         samples = []
         for i in range(num_samples):
             sample = np.random.random()
@@ -338,6 +349,22 @@ class QDriftSim:
         return samples
 
     def simulate(self, time, samples):
+        self.gate_count = 0
+
+        if len(self.hamiltonian_list) == 0:
+            return np.copy(self.initial_state)
+
+        tau = time * np.sum(self.spectral_norms) / (samples * 1.0)
+        final = np.copy(self.initial_state)
+        for n in range(samples):
+            ix = self.draw_hamiltonian_sample()
+            exp_h = linalg.expm(1.j * tau * self.hamiltonian_list[ix])
+            final = exp_h @ final
+        self.final_state = final
+        self.gate_count = samples
+        return np.copy(self.final_state)
+
+    def simulate2(self, time, samples):
         self.gate_count = 0
         evol_op = np.identity(len(self.initial_state))
         if "time" in self.exp_op_cache:
@@ -529,7 +556,9 @@ class CompositeSim:
 
         if self.partition == "prob":
             if self.trotter_sim.order > 1: k = self.trotter_sim.order/2
-            else: return "partition not defined for this order"
+            else: 
+                print("partition not defined for this order") 
+                return 1
             
             upsilon = 2*(5**(k -1))
             lamb = sum(self.spectral_norms)
@@ -547,7 +576,7 @@ class CompositeSim:
             else:
                 self.nb = int(((lamb * self.time/(self.epsilon))**(1-(1/(2*k))) * ((2*k +1)/(2*k + upsilon))**(1/(2*k)) * (2**(1-(1/k))/ upsilon**(1/(2*k)))) +1)
             
-            #print(self.nb)
+            print("Nb is " + str(self.nb))
             
             chi = (lamb/len(self.spectral_norms)) * ((self.nb * (self.epsilon/(lamb * self.time))**(1-(1/(2*k))) * 
             ((2*k + upsilon)/(2*k +1))**(1/(2*k)) * (upsilon**(1/(2*k)) / 2**(1-(1/k))))**(1/2) - 1) 
@@ -672,7 +701,7 @@ class CompositeSim:
         for k in range(1, 25):
             inf_samples[k%2] = self.sample_channel_inf(time, samples, iterations, sample_guess, exact_state)
             print(inf_samples)
-            if np.abs((inf_samples[0] - inf_samples[1])) < (0.05 * self.epsilon): #choice of precision
+            if np.abs((inf_samples[0] - inf_samples[1])) < (0.1 * self.epsilon): #choice of precision
                 break
             else:
                 sample_guess *= 2
@@ -720,12 +749,12 @@ class CompositeSim:
             lower_bound = samples
             upper_bound = samples
         elif self.partition == "trotter":
-            get_inf = lambda x: self.sample_channel_inf(time, samples =1, iterations = x, mcsamples = 1, exact_state = exact_state)
+            get_inf = lambda x: self.sample_channel_inf(time, samples = 1, iterations = x, mcsamples = 1, exact_state = exact_state)
             median_samples = 1
             lower_bound = iterations
             upper_bound = iterations
         else:
-            get_inf = lambda x: self.sample_channel_inf(time, samples = samples, iterations = x, mcsamples = 1, exact_state = exact_state)
+            get_inf = lambda x: self.sample_channel_inf(time, samples = samples, iterations = x, mcsamples = mcsamples, exact_state = exact_state)
             median_samples = 1
             lower_bound = iterations
             upper_bound = iterations
@@ -734,25 +763,34 @@ class CompositeSim:
         infidelity = get_inf(lower_bound)
         if infidelity < self.epsilon:
             print("[sim_channel_performance] Iterations too large, already below error threshold")
-            return 1
+            return self.gate_count
         # Iterate up until some max cutoff
         break_flag = False
-        for n in range(20):
+        upper_bound = upper_bound*2 #incase user input is 1
+        for n in range(10):
             infidelity = get_inf(upper_bound) 
             if infidelity < self.epsilon:
                 break_flag = True
                 break
             else:
-                upper_bound *= 2
+                upper_bound *= (upper_bound)
+                print(infidelity, self.gate_count)
         if break_flag == False :
             print("[sim_channel_performance] maximum number of iterations hit, something is probably off")
             return 1
         print("the upper bound is " + str(upper_bound))
 
+        #catch an edge case
+        if upper_bound == 2:
+            return self.gate_count
+
         #Binary search
         break_flag_2 = False
         while lower_bound < upper_bound:
             mid = lower_bound+ (upper_bound - lower_bound)//2
+            if (mid == 2) or (mid ==1): 
+                break_flag_2 = True
+                break #catching another edge case
             inf_plus = []
             inf_minus = []
             for n in range(median_samples):
@@ -776,7 +814,7 @@ class CompositeSim:
         for i in range (mid+1, mid +3):
             infidelity = get_inf(i)
             good_inf.append([self.gate_count, float(infidelity)])
-        for j in range (mid-2, mid +1):
+        for j in range (max(mid-2, 1), mid +1): #catching an edge case
             infidelity = get_inf(j)
             bad_inf.append([self.gate_count, float(infidelity)])
         #Store the points to interpolate
@@ -787,4 +825,4 @@ class CompositeSim:
         fit = np.poly1d(np.polyfit(self.gate_data[:,1], self.gate_data[:,0], 1)) #linear best fit 
         return fit(self.epsilon)
 
-print("test")
+
