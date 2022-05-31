@@ -16,6 +16,23 @@ from sqlalchemy import false
 from sympy import S, symbols, printing
 from skopt import gp_minimize
 from skopt import gbrt_minimize
+import cProfile, pstats, io
+
+#A simple profiler. To use this, place @profile above the function of interest
+def profile(fnc):
+    """A decorator that uses cProfile to profile a function"""
+    def inner(*args, **kwargs):
+        pr = cProfile.Profile()
+        pr.enable()
+        retval = fnc(*args, **kwargs)
+        pr.disable()
+        s = io.StringIO()
+        sortby = 'cumulative'
+        ps = pstats.Stats(pr, stream=s).sort_stats(sortby)
+        ps.print_stats()
+        print(s.getvalue())
+        return retval
+    return inner
 
 FLOATING_POINT_PRECISION = 1e-10
 MC_SAMPLES_DEFAULT=100
@@ -358,7 +375,7 @@ class QDriftSim:
                 # in multiple instances of FLOATING POINT PRECISION it could slowly
                 # drift from the time that the exponential operators used
 
-        if (len(self.hamiltonian_list) == 0) or (len(self.hamiltonian_list) == 1): 
+        if (len(self.hamiltonian_list) == 0): # or (len(self.hamiltonian_list) == 1) caused issues in comp sim
             return np.copy(self.initial_state) #make the choice not to sample a lone qdrift term
 
         tau = time * np.sum(self.spectral_norms) / (samples * 1.0)
@@ -688,7 +705,7 @@ class CompositeSim:
                 sample_guess *= 2
         return int(sample_guess/2)
 
-    #Simulate and error scaling 
+    #Simulate and error scaling
     def simulate(self, time, samples, iterations): 
         if (self.nb_optimizer == False) and (self.partition != 'prob'): 
             self.nb = samples  #specifying the number of samples having optimized Nb does nothing
