@@ -178,6 +178,7 @@ class TrotterSim:
         self.spectral_norms = []
         self.order = order
         self.gate_count = 0
+        self.exp_op_cache = dict()
 
         # Use the first computational basis state as the initial state until the user specifies.
         if len(hamiltonian_list) == 0:
@@ -227,18 +228,29 @@ class TrotterSim:
             self.initial_state[0] = 1.
         #else:
             #print("[TrotterSim.reset_init_state] I don't have any dimensions")
-        
-                             
+
     def simulate(self, time, iterations):
         self.gate_count = 0
         if len(self.hamiltonian_list) == 0:
             return np.copy(self.initial_state)
 
-        op_time = time/iterations
-        steps = compute_trotter_timesteps(len(self.hamiltonian_list), op_time, self.order) 
-        psi = self.initial_state
-        for (ix, timestep) in steps * iterations: 
-            psi = linalg.expm(1j * self.hamiltonian_list[ix] * self.spectral_norms[ix] * timestep) @ psi
+        if "time" in self.exp_op_cache:
+            if (self.exp_op_cache["time"] != time) or (self.exp_op_cache["iterations"] != iterations):
+                self.exp_op_cache.clear()
+        
+        if self.exp_op_cache == {}:
+            self.exp_op_cache["time"] = time
+            self.exp_op_cache["iterations"] = iterations
+            op_time = time/iterations
+            steps = compute_trotter_timesteps(len(self.hamiltonian_list), op_time, self.order)
+            key = 0
+            for (ix, timestep) in steps:
+                self.exp_op_cache[key] = linalg.expm(1j * self.hamiltonian_list[ix] * self.spectral_norms[ix] * timestep)
+                key +=1
+        num_ops = len(self.exp_op_cache) - 2 #2 of the keys are for time and iters
+        psi = np.copy(self.initial_state)
+        for k in range(num_ops * iterations): 
+            psi = self.exp_op_cache[k % num_ops] @ psi
             self.gate_count += 1
         return psi
 
@@ -346,8 +358,8 @@ class QDriftSim:
                 # in multiple instances of FLOATING POINT PRECISION it could slowly
                 # drift from the time that the exponential operators used
 
-        if len(self.hamiltonian_list) == 0:
-            return np.copy(self.initial_state)
+        if (len(self.hamiltonian_list) == 0) or (len(self.hamiltonian_list) == 1): 
+            return np.copy(self.initial_state) #make the choice not to sample a lone qdrift term
 
         tau = time * np.sum(self.spectral_norms) / (samples * 1.0)
         self.exp_op_cache["time"] = time
