@@ -37,6 +37,15 @@ def profile(fnc):
 FLOATING_POINT_PRECISION = 1e-10
 MC_SAMPLES_DEFAULT=100
 
+#A function to generate a random initial state that is normalized
+def initial_state_randomizer(hilbert_dim):
+    initial_state = []
+    x = np.random.random(hilbert_dim)
+    y = np.random.random(hilbert_dim)
+    initial_state = x + (1j * y) 
+    initial_state_norm = initial_state / np.linalg.norm(initial_state)
+    return initial_state_norm
+
 # Inputs are self explanatory except simulator which can be any of 
 # TrotterSim, QDriftSim, CompositeSim
 # Outputs: a single shot estimate of the infidelity according to the exact output provided. 
@@ -427,7 +436,8 @@ class QDriftSim:
 #Composite simulation but using a framework with lists of tuples instead of lists of matrices for improved runtime
 #This code adopts the convention that for lists of tuples, indices are stored in [0] and values in [1]
 class CompositeSim:
-    def __init__(self, hamiltonian_list = [], inner_order = 1, outer_order = 1, initial_time = 0.1, partition = "random", rng_seed = 1, nb_optimizer = False, weight_threshold = 0.5, nb = 1, epsilon = 0.001):
+    def __init__(self, hamiltonian_list = [], inner_order = 1, outer_order = 1, initial_time = 0.1, partition = "random", 
+    rng_seed = 1, nb_optimizer = False, weight_threshold = 0.5, nb = 1, epsilon = 0.001, state_rand = False):
         self.hamiltonian_list = []
         self.spectral_norms = []
         self.a_norms = [] #contains the partitioned norms, as well as the index of the matrix they come from
@@ -440,6 +450,7 @@ class CompositeSim:
         self.nb_optimizer = nb_optimizer
         self.epsilon = epsilon #simulation error
         self.weight_threshold = weight_threshold
+        self.state_rand = state_rand
 
         self.qdrift_sim = QDriftSim()
         self.trotter_sim = TrotterSim(order = inner_order)
@@ -449,9 +460,15 @@ class CompositeSim:
         self.gate_count = 0 #Used to keep track of the operators in analyse_sim
         self.gate_data = [] #used to access the gate counts in the notebook
 
-        # Use the first computational basis state as the initial state until the user specifies.
-        self.initial_state = np.zeros((self.hilbert_dim, 1))
-        self.initial_state[0] = 1.
+        #Choose to randomize the initial state or just use computational |0>
+        #Should probably add functionality to take an initial state as input at some point
+        if self.state_rand == True:
+            self.initial_state = initial_state_randomizer(self.hilbert_dim)
+        else:
+            # Use the first computational basis state as the initial state until the user specifies.
+            self.initial_state = np.zeros((self.hilbert_dim, 1))
+            self.initial_state[0] = 1.
+        
         self.final_state = np.copy(self.initial_state)
         self.unparsed_hamiltonian = np.copy(hamiltonian_list) #the unmodified input matrix
 
@@ -645,11 +662,12 @@ class CompositeSim:
             return 0
 
         #Nelder-Mead optimization protocol based on analytic cost function for first order
-        elif self.partition == "optimize chop": 
-            guess = sum(self.spectral_norms)/len(self.spectral_norms) #guess the average for the weights
-            upper_bound = [1 for x in range(len(self.spectral_norms))]
-            upper_bound.append(20) #no upper bound for Nb but set to some number we can compute instead of np.inf
-            lower_bound = [0 for x in range(len(self.spectral_norms) + 1)]  #lower bound for Nb is 0
+        elif self.partition == "optimal chop": 
+
+            w_guess = sum(self.spectral_norms)/len(self.spectral_norms) #guess the average for the weights
+            nb_guess = (1/2) * len(self.spectral_norms)
+            gate_cost = lambda x, y : self.sample_channel_inf(self.time, samples = x, iterations = 1, mcsamples = mcsamples, exact_state = exact_state)
+
             optimized_threshold = optimize.minimize(self.nb_first_order_cost, guess, method='Nelder-Mead', bounds=optimize.Bounds(upper_bound, lower_bound))
             print(optimized_threshold.x)
             for i in range(len(self.spectral_norms)):
@@ -684,9 +702,10 @@ class CompositeSim:
     #Simulation Section -- contains functions to call in the workbook to simulate hamiltonians
     
     #A function that repartitions the hamiltonian. Ideally to be called when iterating simulate over timesteps
-    def repartition(self):
+    def repartition(self, time):
         self.a_norms = []
         self.b_norms = []
+        self.time = time
         self.partitioning()
         self.reset_nested_sims()
         return 0
@@ -709,6 +728,7 @@ class CompositeSim:
     def simulate(self, time, samples, iterations): 
         if (self.nb_optimizer == False) and (self.partition != 'prob'): 
             self.nb = samples  #specifying the number of samples having optimized Nb does nothing
+        if len(self.b_norms) == 1: self.nb = 1 #edge case, dont sameple the same gate over and over again
         self.gate_count = 0
         outer_loop_timesteps = compute_trotter_timesteps(2, time / (1. * iterations), self.outer_order)
         self.reset_init_state()
@@ -806,7 +826,6 @@ class CompositeSim:
                 lower_bound = mid + 1
         if break_flag_2 == False:
             print("[sim_channel_performance] function did not find a good point")
-            return 1
 
         #Compute some surrounding points and interpolate
         for i in range (mid+1, mid +3):
