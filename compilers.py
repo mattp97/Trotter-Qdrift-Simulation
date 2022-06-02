@@ -16,6 +16,8 @@ from sqlalchemy import false
 from sympy import S, symbols, printing
 from skopt import gp_minimize
 from skopt import gbrt_minimize
+from skopt.space import Real, Integer
+from skopt.utils import use_named_args
 import cProfile, pstats, io
 
 #A simple profiler. To use this, place @profile above the function of interest
@@ -459,6 +461,7 @@ class CompositeSim:
         self.time = initial_time 
         self.gate_count = 0 #Used to keep track of the operators in analyse_sim
         self.gate_data = [] #used to access the gate counts in the notebook
+        self.optimized_gatecost = 0 #Used to store the optimized gate cost in the partition methods that optimize the overall sim cost
 
         #Choose to randomize the initial state or just use computational |0>
         #Should probably add functionality to take an initial state as input at some point
@@ -474,7 +477,7 @@ class CompositeSim:
 
         self.prep_hamiltonian_lists(hamiltonian_list) #do we want this done before or after the partitioning?
         np.random.seed(self.rng_seed)
-        self.partitioning() #note error was raised because partition() is a built in python method
+        self.partitioning(self.weight_threshold) #note error was raised because partition() is a built in python method
         self.reset_nested_sims()
 
         print("There are " + str(len(self.a_norms)) + " terms in Trotter") #make the partition known
@@ -524,6 +527,9 @@ class CompositeSim:
         self.qdrift_sim.set_hamiltonian(qdrift_terms, qdrift_norms)
         self.trotter_sim.set_hamiltonian(trott_terms, trott_norms)
 
+    ################################################################
+    #OPTIMIZATION FUNCTIONS
+    ################################################################
     #First order cost functions to optimize over
     def nb_first_order_cost(self, weight): #first order cost, currently computes equation 31 from paper. Weight is a list of all weights with Nb in the last entry
         cost = 0.0                         #Error with this function, it may not be possible to optimize Nb with this structure given the expression of the function
@@ -562,9 +568,10 @@ class CompositeSim:
             test_probs.append(float(np.abs((1/self.spectral_norms[i])*test_chi))) #ISSUE
         return max(test_probs)
 
-
-    #partitioning method to execute the partitioning method of the users choice, random likely not used in practice
-    def partitioning(self):
+    ####################
+    #PARTITIONING METHOD to execute the partitioning method of the users choice, random likely not used in practice
+    ####################
+    def partitioning(self, weight_threshold):
         #if ((self.partition == "trotter" or self.partition == "qdrift" or self.partition == "random" or self.partition == "optimize")): #This condition may change for the optimize scheme later
             #print("This partitioning method does not require repartitioning") #Checks that our scheme is sane, prevents unnecessary time wasting
             #return 1 maybe work this in again later?
@@ -616,9 +623,9 @@ class CompositeSim:
                 optimized_weights = optimize.minimize(self.nb_first_order_cost, guess, method='Nelder-Mead', bounds=optimize.Bounds(lower_bound, upper_bound))
                 print(optimized_weights.x)
                 for i in range(len(self.spectral_norms)):
-                    if optimized_weights.x[i] >= self.weight_threshold:
+                    if optimized_weights.x[i] >= weight_threshold:
                         self.a_norms.append([i, self.spectral_norms[i]])
-                    elif optimized_weights.x[i] < self.weight_threshold:
+                    elif optimized_weights.x[i] < weight_threshold:
                         self.b_norms.append([i, self.spectral_norms[i]])
                 self.a_norms = np.array(self.a_norms, dtype='complex')
                 self.b_norms = np.array(self.b_norms, dtype='complex')
@@ -632,9 +639,9 @@ class CompositeSim:
                 optimized_weights = optimize.minimize(self.first_order_cost, guess, method='Nelder-Mead', bounds=optimize.Bounds(lower_bound, upper_bound)) 
                 print(optimized_weights.x)
                 for i in range(len(self.spectral_norms)):
-                    if optimized_weights.x[i] >= self.weight_threshold:
+                    if optimized_weights.x[i] >= weight_threshold:
                         self.a_norms.append([i, self.spectral_norms[i]])
-                    elif optimized_weights.x[i] < self.weight_threshold:
+                    elif optimized_weights.x[i] < weight_threshold:
                         self.b_norms.append([i, self.spectral_norms[i]])
                 self.a_norms = np.array(self.a_norms, dtype='complex')
                 self.b_norms = np.array(self.b_norms, dtype='complex')
@@ -653,7 +660,7 @@ class CompositeSim:
         
         elif self.partition == "chop": #cutting off at some value defined by the user
             for i in range(len(self.spectral_norms)):
-                if self.spectral_norms[i] >= self.weight_threshold:
+                if self.spectral_norms[i] >= weight_threshold:
                     self.a_norms.append(([i, self.spectral_norms[i]]))
                 else:
                     self.b_norms.append(([i, self.spectral_norms[i]]))
@@ -661,22 +668,110 @@ class CompositeSim:
             self.b_norms = np.array(self.b_norms, dtype='complex')
             return 0
 
-        #Nelder-Mead optimization protocol based on analytic cost function for first order
+        
         elif self.partition == "optimal chop": 
-
+            #This partition method is to be used differently than the others in the notebook. It optimizes the gate cost, 
+            #so there is no need to run sim_channel_performance again, instead just call repartitioning for a given time
+            #and the cost is stored in the attribute self.optimized_gatecost. This function relies on self.time which is handled
+            #by repartition()
             w_guess = sum(self.spectral_norms)/len(self.spectral_norms) #guess the average for the weights
             nb_guess = (1/2) * len(self.spectral_norms)
-            gate_cost = lambda x, y : self.sample_channel_inf(self.time, samples = x, iterations = 1, mcsamples = mcsamples, exact_state = exact_state)
+            if self.nb_optimizer == True:
+                dim1 = Integer(name='samples', low=0, high= len(self.spectral_norms) * 100)
+                dim2 = Real(name='weight_threshold', low=0, high = max(self.spectral_norms))
+                dimensions = [dim1, dim2]
+            else:
+                dim2 = Real(name='weight_threshold', low=0, high=max(self.spectral_norms))
+                dimensions = [self.nb, dim2]
 
-            optimized_threshold = optimize.minimize(self.nb_first_order_cost, guess, method='Nelder-Mead', bounds=optimize.Bounds(upper_bound, lower_bound))
-            print(optimized_threshold.x)
-            for i in range(len(self.spectral_norms)):
-                if self.spectral_norms[i] >= optimized_threshold:
-                    self.a_norms.append(([i, self.spectral_norms[i]]))
-                else:
-                    self.b_norms.append(([i, self.spectral_norms[i]]))
-            self.a_norms = np.array(self.a_norms, dtype='complex')
-            self.b_norms = np.array(self.b_norms, dtype='complex')
+            self.partition = "chop" #A trick to optimize the chop partition method when the function below calls self.partitioning
+            #A function similar to that of sim_channel_performance, however, this one is defined only to be optimized not executed
+            @use_named_args(dimensions=dimensions)
+            def optimal_performance(samples, weight_threshold):  
+                good_inf = []
+                bad_inf = []
+                mcsamples = 250 #might want to fix how this is handled
+                self.nb = samples
+                self.repartition(self.time, weight_threshold = weight_threshold) #time is being dealt with in a weird way
+            
+                exact_state = exact_time_evolution(self.unparsed_hamiltonian, self.time, self.initial_state)
+                get_inf = lambda x: self.sample_channel_inf(self.time, samples = samples, iterations = x, mcsamples = mcsamples, exact_state = exact_state)
+                median_samples = 1
+                lower_bound = 1
+                upper_bound = 1
+                
+                #Exponential search to set upper bound, then binary search in that interval
+                infidelity = get_inf(lower_bound)
+                if infidelity < self.epsilon:
+                    print("SAMPLE COUNT: " + str(samples))
+                    print("[sim_channel_performance] Iterations too large, already below error threshold")
+                    return self.gate_count
+                # Iterate up until some max cutoff
+                break_flag = False
+                upper_bound = upper_bound*2 
+                for n in range(10):
+                    infidelity = get_inf(upper_bound) 
+                    if infidelity < self.epsilon:
+                        break_flag = True
+                        break
+                    else:
+                        upper_bound *= (upper_bound)
+                        print(infidelity, self.gate_count, upper_bound)
+                if break_flag == False :
+                    raise Exception("[sim_channel_performance] maximum number of iterations hit, something is probably off")
+                print("the upper bound is " + str(upper_bound))
+
+                #catch an edge case
+                if upper_bound == 2:
+                    return self.gate_count
+
+                #Binary search
+                break_flag_2 = False
+                while lower_bound < upper_bound:
+                    mid = lower_bound + (upper_bound - lower_bound)//2
+                    if (mid == 2) or (mid ==1): 
+                        break_flag_2 = True
+                        break #catching another edge case
+                    inf_plus = []
+                    inf_minus = []
+                    for n in range(median_samples):
+                        inf_plus.append(get_inf(mid+2))
+                        inf_minus.append(get_inf(mid-2))
+                    med_inf_plus = statistics.median(inf_plus)
+                    med_inf_minus = statistics.median(inf_minus)
+                    print((med_inf_minus - self.epsilon, self.epsilon - med_inf_plus, upper_bound, lower_bound))
+                    if (med_inf_plus < self.epsilon) and (med_inf_minus > self.epsilon): #Causing Problems
+                        break_flag_2 = True
+                        break #calling the critical point the point where the second point on either side goes from a bad point to a good point (we are in the neighbourhood of the ideal gate count)
+                    elif med_inf_plus < self.epsilon:
+                        upper_bound = mid - 1
+                    else:
+                        lower_bound = mid + 1
+                if break_flag_2 == False:
+                    print("[sim_channel_performance] function did not find a good point")
+
+                #Compute some surrounding points and interpolate
+                for i in range (mid+1, mid +3):
+                    infidelity = get_inf(i)
+                    good_inf.append([self.gate_count, float(infidelity)])
+                for j in range (max(mid-2, 1), mid +1): #catching an edge case
+                    infidelity = get_inf(j)
+                    bad_inf.append([self.gate_count, float(infidelity)])
+                #Store the points to interpolate
+                good_inf = np.array(good_inf)
+                bad_inf = np.array(bad_inf)
+                self.gate_data = np.concatenate((bad_inf, good_inf), 0)
+                #print(self.gate_data)
+                fit = np.poly1d(np.polyfit(self.gate_data[:,1], self.gate_data[:,0], 1)) #linear best fit 
+                return fit(self.epsilon)
+            
+            result = gbrt_minimize(func=optimal_performance,dimensions=dimensions, n_calls=30, n_initial_points = 5, 
+            random_state=4, verbose = True, acq_func = "LCB")
+            print(result.fun)
+            print(result.x)
+            self.optimized_gatecost = result.fun
+
+            self.nb = result.x[0]
             return 0
 
         elif self.partition == "trotter":
@@ -698,15 +793,16 @@ class CompositeSim:
         else:
             print("Invalid input for attribute 'partition' ")
             return 1
-    ##########################################################################################
-    #Simulation Section -- contains functions to call in the workbook to simulate hamiltonians
-    
+
+##########################################################################################
+#Simulation Section -- contains functions to call in the workbook to simulate hamiltonians
+##########################################################################################
     #A function that repartitions the hamiltonian. Ideally to be called when iterating simulate over timesteps
-    def repartition(self, time):
+    def repartition(self, time, weight_threshold = None):
         self.a_norms = []
         self.b_norms = []
         self.time = time
-        self.partitioning()
+        self.partitioning(weight_threshold)
         self.reset_nested_sims()
         return 0
     
@@ -794,8 +890,7 @@ class CompositeSim:
                 upper_bound *= (upper_bound)
                 print(infidelity, self.gate_count)
         if break_flag == False :
-            print("[sim_channel_performance] maximum number of iterations hit, something is probably off")
-            return 1
+            raise Exception("[sim_channel_performance] maximum number of iterations hit, something is probably off")
         print("the upper bound is " + str(upper_bound))
 
         #catch an edge case
@@ -841,5 +936,3 @@ class CompositeSim:
         #print(self.gate_data)
         fit = np.poly1d(np.polyfit(self.gate_data[:,1], self.gate_data[:,0], 1)) #linear best fit 
         return fit(self.epsilon)
-
-
