@@ -36,6 +36,15 @@ def profile(fnc):
         return retval
     return inner
 
+#a decorator that can allow one to conditionally test functions (like the one above) or apply other decorators
+def conditional_decorator(dec, condition):
+    def decorator(func):
+        if not condition:
+            # Return the function unchanged, not decorated.
+            return func
+        return dec(func)
+    return decorator
+
 FLOATING_POINT_PRECISION = 1e-10
 MC_SAMPLES_DEFAULT=100
 
@@ -668,7 +677,6 @@ class CompositeSim:
             self.b_norms = np.array(self.b_norms, dtype='complex')
             return 0
 
-        
         elif self.partition == "optimal chop": 
             #This partition method is to be used differently than the others in the notebook. It optimizes the gate cost, 
             #so there is no need to run sim_channel_performance again, instead just call repartitioning for a given time
@@ -676,18 +684,19 @@ class CompositeSim:
             #by repartition()
             w_guess = sum(self.spectral_norms)/len(self.spectral_norms) #guess the average for the weights
             nb_guess = (1/2) * len(self.spectral_norms)
-            if self.nb_optimizer == True:
+            condition = self.nb_optimizer
+            if condition == True:
                 dim1 = Integer(name='samples', low=0, high= len(self.spectral_norms) * 100)
                 dim2 = Real(name='weight_threshold', low=0, high = max(self.spectral_norms))
                 dimensions = [dim1, dim2]
             else:
                 dim2 = Real(name='weight_threshold', low=0, high=max(self.spectral_norms))
-                dimensions = [self.nb, dim2]
-
+                dimensions = [dim2]
             self.partition = "chop" #A trick to optimize the chop partition method when the function below calls self.partitioning
+
             #A function similar to that of sim_channel_performance, however, this one is defined only to be optimized not executed
             @use_named_args(dimensions=dimensions)
-            def optimal_performance(samples, weight_threshold):  
+            def nb_optimal_performance(samples, weight_threshold):  
                 good_inf = []
                 bad_inf = []
                 mcsamples = 250 #might want to fix how this is handled
@@ -764,14 +773,98 @@ class CompositeSim:
                 #print(self.gate_data)
                 fit = np.poly1d(np.polyfit(self.gate_data[:,1], self.gate_data[:,0], 1)) #linear best fit 
                 return fit(self.epsilon)
+
+            @use_named_args(dimensions=dimensions)
+            def optimal_performance(weight_threshold):  
+                good_inf = []
+                bad_inf = []
+                mcsamples = 250 #might want to fix how this is handled
+                samples = self.nb  #this function is exactly the same as above with this change
+                self.repartition(self.time, weight_threshold = weight_threshold) #time is being dealt with in a weird way
             
-            result = gbrt_minimize(func=optimal_performance,dimensions=dimensions, n_calls=30, n_initial_points = 5, 
-            random_state=4, verbose = True, acq_func = "LCB")
+                exact_state = exact_time_evolution(self.unparsed_hamiltonian, self.time, self.initial_state)
+                get_inf = lambda x: self.sample_channel_inf(self.time, samples = samples, iterations = x, mcsamples = mcsamples, exact_state = exact_state)
+                median_samples = 1
+                lower_bound = 1
+                upper_bound = 1
+                
+                #Exponential search to set upper bound, then binary search in that interval
+                infidelity = get_inf(lower_bound)
+                if infidelity < self.epsilon:
+                    print("SAMPLE COUNT: " + str(samples))
+                    print("[sim_channel_performance] Iterations too large, already below error threshold")
+                    return self.gate_count
+                # Iterate up until some max cutoff
+                break_flag = False
+                upper_bound = upper_bound*2 
+                for n in range(10):
+                    infidelity = get_inf(upper_bound) 
+                    if infidelity < self.epsilon:
+                        break_flag = True
+                        break
+                    else:
+                        upper_bound *= (upper_bound)
+                        print(infidelity, self.gate_count, upper_bound)
+                if break_flag == False :
+                    raise Exception("[sim_channel_performance] maximum number of iterations hit, something is probably off")
+                print("the upper bound is " + str(upper_bound))
+
+                #catch an edge case
+                if upper_bound == 2:
+                    return self.gate_count
+
+                #Binary search
+                break_flag_2 = False
+                while lower_bound < upper_bound:
+                    mid = lower_bound + (upper_bound - lower_bound)//2
+                    if (mid == 2) or (mid ==1): 
+                        break_flag_2 = True
+                        break #catching another edge case
+                    inf_plus = []
+                    inf_minus = []
+                    for n in range(median_samples):
+                        inf_plus.append(get_inf(mid+2))
+                        inf_minus.append(get_inf(mid-2))
+                    med_inf_plus = statistics.median(inf_plus)
+                    med_inf_minus = statistics.median(inf_minus)
+                    print((med_inf_minus - self.epsilon, self.epsilon - med_inf_plus, upper_bound, lower_bound))
+                    if (med_inf_plus < self.epsilon) and (med_inf_minus > self.epsilon): #Causing Problems
+                        break_flag_2 = True
+                        break #calling the critical point the point where the second point on either side goes from a bad point to a good point (we are in the neighbourhood of the ideal gate count)
+                    elif med_inf_plus < self.epsilon:
+                        upper_bound = mid - 1
+                    else:
+                        lower_bound = mid + 1
+                if break_flag_2 == False:
+                    print("[sim_channel_performance] function did not find a good point")
+
+                #Compute some surrounding points and interpolate
+                for i in range (mid+1, mid +3):
+                    infidelity = get_inf(i)
+                    good_inf.append([self.gate_count, float(infidelity)])
+                for j in range (max(mid-2, 1), mid +1): #catching an edge case
+                    infidelity = get_inf(j)
+                    bad_inf.append([self.gate_count, float(infidelity)])
+                #Store the points to interpolate
+                good_inf = np.array(good_inf)
+                bad_inf = np.array(bad_inf)
+                self.gate_data = np.concatenate((bad_inf, good_inf), 0)
+                #print(self.gate_data)
+                fit = np.poly1d(np.polyfit(self.gate_data[:,1], self.gate_data[:,0], 1)) #linear best fit 
+                return fit(self.epsilon)
+
+            if condition == True: #the case where we optimize nb
+                result = gbrt_minimize(func=nb_optimal_performance,dimensions=dimensions, n_calls=30, n_initial_points = 5, 
+                random_state=4, verbose = True, acq_func = "LCB")
+                self.nb = result.x[0]
+            else: 
+                result = gbrt_minimize(func=optimal_performance,dimensions=dimensions, n_calls=20, n_initial_points = 5, 
+                random_state=4, verbose = True, acq_func = "LCB")
+                
             print(result.fun)
             print(result.x)
             self.optimized_gatecost = result.fun
-
-            self.nb = result.x[0]
+            self.partition = "optimal chop" #reset for iterating
             return 0
 
         elif self.partition == "trotter":
