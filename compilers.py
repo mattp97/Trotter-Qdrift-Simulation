@@ -57,6 +57,20 @@ def initial_state_randomizer(hilbert_dim):
     initial_state_norm = initial_state / np.linalg.norm(initial_state)
     return initial_state_norm
 
+#A function to calculate the trace distance between two numpy arrays (density operators)
+def trace_distance(rho, sigma):
+    diff = rho - sigma
+    w, v = np.linalg.eigh(diff)
+    dist = 1/2 * sum(np.abs(w))
+    return dist
+
+def exact_time_evolution_density(hamiltonian_list, time, initial_rho):
+    if len(hamiltonian_list) == 0:
+        print("[exact_time_evolution] pls give me hamiltonian")
+        return 1
+    exp_op = linalg.expm(1j * sum(hamiltonian_list) * time)
+    return exp_op @ initial_rho @ exp_op.conj().T
+
 # Inputs are self explanatory except simulator which can be any of 
 # TrotterSim, QDriftSim, CompositeSim
 # Outputs: a single shot estimate of the infidelity according to the exact output provided. 
@@ -291,14 +305,39 @@ class TrotterSim:
             self.gate_count += 1
         return psi
 
+    def simulate_density(self, time, iterations):
+        self.gate_count = 0
+        if len(self.hamiltonian_list) == 0:
+            return np.copy(self.initial_state)
+
+        if "time" in self.exp_op_cache:
+            if (self.exp_op_cache["time"] != time) or (self.exp_op_cache["iterations"] != iterations):
+                self.exp_op_cache.clear()
+        
+        if self.exp_op_cache == {}:
+            self.exp_op_cache["time"] = time
+            self.exp_op_cache["iterations"] = iterations
+            op_time = time/iterations
+            steps = compute_trotter_timesteps(len(self.hamiltonian_list), op_time, self.order)
+            key = 0
+            for (ix, timestep) in steps:
+                self.exp_op_cache[key] = linalg.expm(1j * self.hamiltonian_list[ix] * self.spectral_norms[ix] * timestep)
+                key +=1
+        num_ops = len(self.exp_op_cache) - 2 #2 of the keys are for time and iters
+        psi = np.copy(self.initial_state)
+        for k in range(num_ops * iterations): 
+            psi = self.exp_op_cache[k % num_ops] @ psi @ self.exp_op_cache[k % num_ops].conj().T
+            self.gate_count += 1
+        return psi
+
     def infidelity(self, time, iterations):
         H = []
         for i in range(len(self.spectral_norms)):
             H.append(self.hamiltonian_list[i] * self.spectral_norms[i]) 
         sim_state = self.simulate(time, iterations)
         good_state = np.dot(linalg.expm(1j * sum(H) * time), self.initial_state)
-        #infidelity = 1 - (np.abs(np.dot(good_state.conj().T, sim_state)))**2
-        infidelity = (np.linalg.norm(sim_state - good_state))                     
+        infidelity = 1 - (np.abs(np.dot(good_state.conj().T, sim_state)))**2
+        #infidelity = (np.linalg.norm(sim_state - good_state)) #-- Euclidean distance                    
         return infidelity                         
     
     
@@ -385,7 +424,7 @@ class QDriftSim:
                 tot += self.spectral_norms[ix] / lamb
             samples.append(index)
         return samples
-
+    
     def simulate(self, time, samples):
         self.gate_count = 0
         if "time" in self.exp_op_cache:
@@ -413,6 +452,35 @@ class QDriftSim:
         self.final_state = final
         self.gate_count = samples
         return np.copy(self.final_state)
+
+    def simulate_density(self, time, samples):
+        self.gate_count = 0
+        if "time" in self.exp_op_cache:
+            if (self.exp_op_cache["time"] != time) or (self.exp_op_cache["samples"] != samples):
+                self.exp_op_cache.clear()
+                # WARNING: potential could allow for "time creep", by adjusting time 
+                # in multiple instances of FLOATING POINT PRECISION it could slowly
+                # drift from the time that the exponential operators used
+
+        if (len(self.hamiltonian_list) == 0): # or (len(self.hamiltonian_list) == 1) caused issues in comp sim
+            return np.copy(self.initial_state) #make the choice not to sample a lone qdrift term
+
+        tau = time * np.sum(self.spectral_norms) / (samples * 1.0)
+        self.exp_op_cache["time"] = time
+        self.exp_op_cache["samples"] = samples
+        final = np.copy(self.initial_state)
+        obtained_samples = self.draw_hamiltonian_samples(samples)
+        for ix in obtained_samples:
+            if ix in self.exp_op_cache:
+                final = self.exp_op_cache.get(ix) @ final @ self.exp_op_cache.get(ix).conj().T
+            else:
+                exp_h = linalg.expm(1.j * tau * self.hamiltonian_list[ix])
+                final = exp_h @ final @ exp_h.conj().T
+                self.exp_op_cache[ix] = exp_h
+        self.final_state = final
+        self.gate_count = samples
+        return np.copy(self.final_state)
+
 
     def sample_channel_inf(self, time, samples, mcsamples):
         sample_fidelity = []
@@ -1029,3 +1097,220 @@ class CompositeSim:
         #print(self.gate_data)
         fit = np.poly1d(np.polyfit(self.gate_data[:,1], self.gate_data[:,0], 1)) #linear best fit 
         return fit(self.epsilon)
+
+############################################################################################################
+#To perform the same as above, but with the density matrix formalisim to avoid the use of infidelity
+class DensityMatrixSim:
+    def __init__(self, hamiltonian_list = [], inner_order = 1, outer_order = 1, initial_time = 0.1, partition = "random", 
+    rng_seed = 1, nb_optimizer = False, weight_threshold = 0.5, nb = 1, epsilon = 0.001, state_rand = False, pure = True):
+
+        self.hamiltonian_list = []
+        self.spectral_norms = []
+        self.a_norms = [] #contains the partitioned norms, as well as the index of the matrix they come from
+        self.b_norms = [] 
+        self.hilbert_dim = hamiltonian_list[0].shape[0] 
+        self.rng_seed = rng_seed
+        self.outer_order = outer_order 
+        self.inner_order = inner_order
+        self.partition = partition
+        self.nb_optimizer = nb_optimizer
+        self.epsilon = epsilon #simulation error
+        self.weight_threshold = weight_threshold
+        self.state_rand = state_rand
+
+        self.initial_rho = np.zeros((self.hilbert_dim, 2)) #density matrix
+        self.pure = pure #boolean for pure or mixed states
+
+        self.qdrift_sim = QDriftSim()
+        self.trotter_sim = TrotterSim(order = inner_order)
+
+        self.nb = nb #number of Qdrift channel samples. Useful to define as an attribute if we are choosing whether or not to optimize over it. Only used in analytic cost optimization
+        self.time = initial_time 
+        self.gate_count = 0 #Used to keep track of the operators in analyse_sim
+        self.gate_data = [] #used to access the gate counts in the notebook
+        self.optimized_gatecost = 0 #Used to store the optimized gate cost in the partition methods that optimize the overall sim cost
+
+        #Choose to randomize the initial state or just use computational |0>
+        #Should probably add functionality to take an initial state as input at some point
+        if self.state_rand == True:
+            self.initial_state = initial_state_randomizer(self.hilbert_dim)
+        else:
+            # Use the first computational basis state as the initial state until the user specifies.
+            self.initial_state = np.zeros((self.hilbert_dim, 1))
+            self.initial_state[0] = 1.
+        
+        if self.pure == True:
+            self.prep_pure_rho()
+        else:
+            raise Exception("mixed states not yet supported")
+
+        self.final_rho = np.copy(self.initial_rho)
+        self.unparsed_hamiltonian = np.copy(hamiltonian_list) #the unmodified input matrix
+
+        self.prep_hamiltonian_lists(hamiltonian_list) #do we want this done before or after the partitioning?
+        np.random.seed(self.rng_seed)
+        self.partitioning(self.weight_threshold) #note error was raised because partition() is a built in python method
+        self.reset_nested_sims()
+
+        print("There are " + str(len(self.a_norms)) + " terms in Trotter") #make the partition known
+        print("There are " + str(len(self.b_norms)) + " terms in QDrift")
+        if nb_optimizer == True:
+            print("Nb is equal to " + str(self.nb))
+
+    #Class functions
+    def prep_hamiltonian_lists(self, ham_list):
+        for h in ham_list:
+            temp_norm = np.linalg.norm(h, ord=2)
+            if temp_norm < FLOATING_POINT_PRECISION:
+                print("[prep_hamiltonian_lists] Spectral norm of a hamiltonian found to be 0")
+                self.spectral_norms = []
+                self.hamiltonian_list = []
+                return 1
+            self.spectral_norms.append(temp_norm)
+            self.hamiltonian_list.append(h / temp_norm)
+        return 0
+
+    def prep_pure_rho(self):
+        #print(self.initial_state, self.initial_state.conj())
+        self.initial_rho = np.outer(self.initial_state, self.initial_state.conj())
+
+    # Prep simulators with terms, isolated as function for reusability in partitioning
+    def reset_nested_sims(self):
+        qdrift_terms, qdrift_norms = [] , []
+        trott_terms, trott_norms = [] , []
+        for ix in range(len(self.a_norms)):
+            index = int(self.a_norms[ix][0].real)
+            norm = self.a_norms[ix][1]
+            trott_terms.append(self.hamiltonian_list[index])
+            trott_norms.append(norm)
+        
+        for ix in range(len(self.b_norms)):
+            index = int(self.b_norms[ix][0].real)
+            norm = self.b_norms[ix][1]
+            qdrift_terms.append(self.hamiltonian_list[index])
+            qdrift_norms.append(norm)
+        self.qdrift_sim.set_hamiltonian(qdrift_terms, qdrift_norms)
+        self.trotter_sim.set_hamiltonian(trott_terms, trott_norms) 
+
+    def repartition(self, time, weight_threshold = None):
+        self.a_norms = []
+        self.b_norms = []
+        self.time = time
+        self.partitioning(weight_threshold)
+        self.reset_nested_sims()
+        return 0
+
+    def reset_init_state(self):
+        self.initial_state = np.zeros((self.hilbert_dim, 2))
+        self.initial_state[0] = 1.
+        self.trotter_sim.reset_init_state()
+        self.qdrift_sim.reset_init_state()
+
+    def partitioning(self, weight_threshold):
+        #if ((self.partition == "trotter" or self.partition == "qdrift" or self.partition == "random" or self.partition == "optimize")): #This condition may change for the optimize scheme later
+            #print("This partitioning method does not require repartitioning") #Checks that our scheme is sane, prevents unnecessary time wasting
+            #return 1 maybe work this in again later?
+
+        if self.partition == "prob":
+            if self.trotter_sim.order > 1: k = self.trotter_sim.order/2
+            else: 
+                print("partition not defined for this order") 
+                return 1
+            
+            upsilon = 2*(5**(k -1))
+            lamb = sum(self.spectral_norms)
+
+            if self.nb_optimizer == True:
+                optimal_nb = optimize.minimize(self.prob_nb_optima, self.nb, method='Nelder-Mead', bounds = optimize.Bounds([0], [np.inf], keep_feasible = False)) #Nb attribute serves as an inital geuss in this partition
+                nb_high = int(optimal_nb.x +1)
+                nb_low = int(optimal_nb.x)
+                prob_high = self.prob_nb_optima(nb_high) #check higher, (nb must be int)
+                prob_low = self.prob_nb_optima(nb_low) #check lower 
+                if prob_high > prob_low:
+                    self.nb = nb_low
+                else:
+                    self.nb = nb_high
+            else:
+                self.nb = int(((lamb * self.time/(self.epsilon))**(1-(1/(2*k))) * ((2*k +1)/(2*k + upsilon))**(1/(2*k)) * (2**(1-(1/k))/ upsilon**(1/(2*k)))) +1)
+            
+            print("Nb is " + str(self.nb))
+            
+            chi = (lamb/len(self.spectral_norms)) * ((self.nb * (self.epsilon/(lamb * self.time))**(1-(1/(2*k))) * 
+            ((2*k + upsilon)/(2*k +1))**(1/(2*k)) * (upsilon**(1/(2*k)) / 2**(1-(1/k))))**(1/2) - 1) 
+            
+            for i in range(len(self.spectral_norms)):
+                num = np.random.random()
+                prob=(1- min((1/self.spectral_norms[i])*chi, 1))
+                if prob >= num:
+                    self.a_norms.append(([i, self.spectral_norms[i]]))
+                else:
+                    self.b_norms.append(([i, self.spectral_norms[i]]))
+            return 0
+        
+        elif self.partition == "random":
+            for i in range(len(self.spectral_norms)):
+                sample = np.random.random()
+                if sample >= 0.5:
+                    self.a_norms.append([i, self.spectral_norms[i]])
+                elif sample < 0.5:
+                    self.b_norms.append([i, self.spectral_norms[i]])
+            self.a_norms = np.array(self.a_norms, dtype='complex')
+            self.b_norms = np.array(self.b_norms, dtype='complex')
+            return 0
+        
+        elif self.partition == "chop": #cutting off at some value defined by the user
+            for i in range(len(self.spectral_norms)):
+                if self.spectral_norms[i] >= weight_threshold:
+                    self.a_norms.append(([i, self.spectral_norms[i]]))
+                else:
+                    self.b_norms.append(([i, self.spectral_norms[i]]))
+            self.a_norms = np.array(self.a_norms, dtype='complex')
+            self.b_norms = np.array(self.b_norms, dtype='complex')
+            return 0
+
+        elif self.partition == "trotter":
+            for i in range(len(self.spectral_norms)):
+                self.a_norms.append([i, self.spectral_norms[i]])
+            self.b_norms = []
+            self.a_norms = np.array(self.a_norms, dtype='complex')
+            self.b_norms = np.array(self.b_norms, dtype='complex')
+            return 0
+
+        elif self.partition == "qdrift":
+            for i in range(len(self.spectral_norms)):
+                self.b_norms.append([i, self.spectral_norms[i]])
+            self.a_norms = []
+            self.a_norms = np.array(self.a_norms, dtype='complex')
+            self.b_norms = np.array(self.b_norms, dtype='complex')
+            return 0
+
+        else:
+            print("Invalid input for attribute 'partition' ")
+            return 1
+
+
+    def simulate(self, time, samples, iterations): 
+        if (self.nb_optimizer == False) and (self.partition != 'prob'): 
+            self.nb = samples  #specifying the number of samples having optimized Nb does nothing
+        if len(self.b_norms) == 1: self.nb = 1 #edge case, dont sameple the same gate over and over again
+        self.gate_count = 0
+        outer_loop_timesteps = compute_trotter_timesteps(2, time / (1. * iterations), self.outer_order)
+        self.reset_init_state()
+        current_state = np.copy(self.initial_rho)
+        for i in range(iterations):
+            for (ix, sim_time) in outer_loop_timesteps:
+                if ix == 0:
+                    self.trotter_sim.set_initial_state(current_state)
+                    current_state = self.trotter_sim.simulate_density(sim_time, 1)
+                    self.gate_count += self.trotter_sim.gate_count
+                if ix == 1:
+                    self.qdrift_sim.set_initial_state(current_state)
+                    current_state = self.qdrift_sim.simulate_density(sim_time, self.nb)
+                    self.gate_count += self.qdrift_sim.gate_count
+        return current_state
+
+    def sim_distance(self, time, samples, iterations):
+        sim_density_op = self.simulate(time, samples, iterations)
+        exact_density_op = exact_time_evolution_density(self.unparsed_hamiltonian, time, self.initial_rho)
+        trace_dist = trace_distance(sim_density_op, exact_density_op)
+        return trace_dist
