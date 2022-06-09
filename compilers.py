@@ -365,7 +365,7 @@ class QDriftSim:
         if len(hamiltonian_list) == 0:
             self.initial_state = np.zeros((1,1))
         else:
-            self.initial_state = np.zeros((hamiltonian_list[0].shape[0]))
+            self.initial_state = np.zeros((self.hamiltonian_list[0].shape[0]))
         self.initial_state[0] = 1
         self.final_state = np.copy(self.initial_state)
 
@@ -458,9 +458,6 @@ class QDriftSim:
         if "time" in self.exp_op_cache:
             if (self.exp_op_cache["time"] != time) or (self.exp_op_cache["samples"] != samples):
                 self.exp_op_cache.clear()
-                # WARNING: potential could allow for "time creep", by adjusting time 
-                # in multiple instances of FLOATING POINT PRECISION it could slowly
-                # drift from the time that the exponential operators used
 
         if (len(self.hamiltonian_list) == 0): # or (len(self.hamiltonian_list) == 1) caused issues in comp sim
             return np.copy(self.initial_state) #make the choice not to sample a lone qdrift term
@@ -480,6 +477,30 @@ class QDriftSim:
         self.final_state = final
         self.gate_count = samples
         return np.copy(self.final_state)
+
+    def construct_density(self, time, samples):
+        self.gate_count = 0
+        if "time" in self.exp_op_cache:
+            if (self.exp_op_cache["time"] != time) or (self.exp_op_cache["samples"] != samples):
+                self.exp_op_cache.clear()
+
+        if (len(self.hamiltonian_list) == 0): # or (len(self.hamiltonian_list) == 1) caused issues in comp sim
+            return np.copy(self.initial_state) #make the choice not to sample a lone qdrift term
+
+        self.exp_op_cache["time"] = time
+        self.exp_op_cache["samples"] = samples
+        lamb = np.sum(self.spectral_norms)
+        tau = time * lamb / (samples * 1.0)
+        for k in range(len(self.spectral_norms)):
+            self.exp_op_cache[k] = linalg.expm(1.j * tau * self.hamiltonian_list[k])
+        rho = np.copy(self.initial_state)
+        for i in range(samples):
+            channel_output = np.zeros((self.hamiltonian_list[0].shape[0], self.hamiltonian_list[0].shape[0]), dtype = 'complex')
+            for j in range(len(self.spectral_norms)):
+                channel_output += (self.spectral_norms[j]/lamb) * self.exp_op_cache.get(j) @ rho @ self.exp_op_cache.get(j).conj().T
+            rho = channel_output
+        return rho
+
 
 
     def sample_channel_inf(self, time, samples, mcsamples):
@@ -1142,7 +1163,9 @@ class DensityMatrixSim:
         if self.pure == True:
             self.prep_pure_rho()
         else:
-            raise Exception("mixed states not yet supported")
+            self.prep_pure_rho()
+            #raise Exception("mixed states not yet supported") -- comment out for now
+            print('mixed states not supported')
 
         self.final_rho = np.copy(self.initial_rho)
         self.unparsed_hamiltonian = np.copy(hamiltonian_list) #the unmodified input matrix
@@ -1295,21 +1318,35 @@ class DensityMatrixSim:
         if len(self.b_norms) == 1: self.nb = 1 #edge case, dont sameple the same gate over and over again
         self.gate_count = 0
         outer_loop_timesteps = compute_trotter_timesteps(2, time / (1. * iterations), self.outer_order)
-        self.reset_init_state()
-        current_state = np.copy(self.initial_rho)
-        for i in range(iterations):
-            for (ix, sim_time) in outer_loop_timesteps:
-                if ix == 0:
-                    self.trotter_sim.set_initial_state(current_state)
-                    current_state = self.trotter_sim.simulate_density(sim_time, 1)
-                    self.gate_count += self.trotter_sim.gate_count
-                if ix == 1:
-                    self.qdrift_sim.set_initial_state(current_state)
-                    current_state = self.qdrift_sim.simulate_density(sim_time, self.nb)
-                    self.gate_count += self.qdrift_sim.gate_count
-        return current_state
+        #self.reset_init_state()
+        if self.pure == True:
+            current_state = np.copy(self.initial_state)
+            for i in range(iterations):
+                for (ix, sim_time) in outer_loop_timesteps:
+                    if ix == 0:
+                        self.trotter_sim.set_initial_state(current_state)
+                        current_state = self.trotter_sim.simulate(sim_time, 1)
+                        self.gate_count += self.trotter_sim.gate_count
+                    if ix == 1:
+                        self.qdrift_sim.set_initial_state(current_state)
+                        current_state = self.qdrift_sim.simulate(sim_time, self.nb)
+                        self.gate_count += self.qdrift_sim.gate_count
+            return np.outer(current_state, current_state.conj())
+        else:
+            current_state = np.copy(self.initial_rho)
+            for i in range(iterations):
+                for (ix, sim_time) in outer_loop_timesteps:
+                    if ix == 0:
+                        self.trotter_sim.set_initial_state(current_state)
+                        current_state = self.trotter_sim.simulate_density(sim_time, 1)
+                        self.gate_count += self.trotter_sim.gate_count
+                    if ix == 1:
+                        self.qdrift_sim.set_initial_state(current_state)
+                        current_state = self.qdrift_sim.construct_density(sim_time, self.nb)
+                        self.gate_count += self.qdrift_sim.gate_count
+            return current_state
 
-    def sim_distance(self, time, samples, iterations):
+    def sim_trace_distance(self, time, samples, iterations):
         sim_density_op = self.simulate(time, samples, iterations)
         exact_density_op = exact_time_evolution_density(self.unparsed_hamiltonian, time, self.initial_rho)
         trace_dist = trace_distance(sim_density_op, exact_density_op)
