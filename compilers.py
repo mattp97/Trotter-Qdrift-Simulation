@@ -9,7 +9,7 @@ from scipy import linalg
 from scipy import optimize
 from scipy import interpolate
 import math
-from numpy import random
+from numpy import mat, random
 import cmath
 import time as time_this
 from sqlalchemy import false
@@ -130,7 +130,7 @@ class TrotterSim:
 
     # Assumes terms are already normalized
     def set_hamiltonian(self, mat_list = [], norm_list = []):
-        if len(mat_list) != len(mat_list):
+        if len(mat_list) != len(norm_list):
             print("[Trott - set_hamiltonian] Incorrect length arrays")
             return 1
         self.hamiltonian_list = mat_list
@@ -141,6 +141,11 @@ class TrotterSim:
         for ix in range(len(self.hamiltonian_list)):
             ret.append(np.copy(self.hamiltonian_list[ix]) * self.spectral_norms[ix])
         return ret
+
+    def clear_hamiltonian(self):
+        self.hamiltonian_list = []
+        self.spectral_norms = []
+        return 0
 
     # Do some sanity checking before storing. Check if input is proper dimensions and an actual
     # quantum state.
@@ -278,11 +283,16 @@ class QDriftSim:
 
     # Assumes terms are already normalized
     def set_hamiltonian(self, mat_list = [], norm_list = []):
-        if len(mat_list) != len(mat_list):
+        if len(mat_list) != len(norm_list):
             print("[QD - set_hamiltonian] Incorrect length arrays")
             return 1
         self.hamiltonian_list = mat_list
         self.spectral_norms = norm_list
+
+    def clear_hamiltonian(self):
+        self.hamiltonian_list = []
+        self.spectral_norms = []
+        return 0
 
     # RETURNS A 0 BASED INDEX TO BE USED IN CODE!!
     def draw_hamiltonian_samples(self, num_samples):
@@ -375,8 +385,6 @@ class QDriftSim:
             rho = channel_output
         return rho
 
-
-
     def sample_channel_inf(self, time, samples, mcsamples):
         sample_fidelity = []
         H = []
@@ -414,8 +422,11 @@ class CompositeSim:
     rng_seed = 1, nb_optimizer = False, weight_threshold = 0.5, nb = 1, epsilon = 0.001, state_rand = False):
         self.hamiltonian_list = []
         self.spectral_norms = []
-        self.trotter_indices = [] # These contain indices into the lists self.hamiltonian_list and self.spectral_norms
-        self.qdrift_indices = []
+        self.trotter_operators = []
+        self.trotter_norms = []
+        self.qdrift_operators = []
+        self.qdrift_norms = []
+
         self.hilbert_dim = hamiltonian_list[0].shape[0] 
         self.rng_seed = rng_seed
         self.outer_order = outer_order 
@@ -447,10 +458,10 @@ class CompositeSim:
         self.final_state = np.copy(self.initial_state)
         self.unparsed_hamiltonian = np.copy(hamiltonian_list) #the unmodified input matrix
 
-        self.prep_hamiltonian_lists(hamiltonian_list) #do we want this done before or after the partitioning?
+        # NOTE: This sets the default behavior to be a fully Trotter channel!
+        self.set_partition(hamiltonian_list, [])
         np.random.seed(self.rng_seed)
         self.partitioning(self.weight_threshold) #note error was raised because partition() is a built in python method
-        self.reset_nested_sims()
 
         print("There are " + str(len(self.a_norms)) + " terms in Trotter") #make the partition known
         print("There are " + str(len(self.b_norms)) + " terms in QDrift")
@@ -474,6 +485,9 @@ class CompositeSim:
         for ix in range(len(self.hamiltonian_list)):
             ret.append(np.copy(self.hamiltonian_list[ix]) * self.spectral_norms[ix])
         return ret
+    
+    def get_lambda(self):
+        return sum(self.spectral_norms)
 
     def reset_init_state(self):
         self.initial_state = np.zeros((self.hilbert_dim, 1))
@@ -481,23 +495,6 @@ class CompositeSim:
         self.trotter_sim.reset_init_state()
         self.qdrift_sim.reset_init_state()
 
-    # Prep simulators with terms, isolated as function for reusability in partitioning
-    def reset_nested_sims(self):
-        qdrift_terms, qdrift_norms = [] , []
-        trott_terms, trott_norms = [] , []
-        for ix in range(len(self.a_norms)):
-            index = int(self.a_norms[ix][0].real)
-            norm = self.a_norms[ix][1]
-            trott_terms.append(self.hamiltonian_list[index])
-            trott_norms.append(norm)
-        
-        for ix in range(len(self.b_norms)):
-            index = int(self.b_norms[ix][0].real)
-            norm = self.b_norms[ix][1]
-            qdrift_terms.append(self.hamiltonian_list[index])
-            qdrift_norms.append(norm)
-        self.qdrift_sim.set_hamiltonian(qdrift_terms, qdrift_norms)
-        self.trotter_sim.set_hamiltonian(trott_terms, trott_norms)
 
     ################################################################
     #OPTIMIZATION FUNCTIONS
@@ -542,8 +539,33 @@ class CompositeSim:
 
     # Inputs: trotter_list - a python list of numpy arrays, each element is a single term in a hamiltonian
     #         qdrift_list - same but these terms go into the qdrift simulator. 
+    # Note: each of these matrices is NOT normalized
     def set_partition(self, trotter_list, qdrift_list):
+        self.trotter_norms, self.trotter_operators = [], []
+        self.qdrift_norms, self.qdrift_operators = [], []
+        
+        for matrix in trotter_list:
+            temp_norm = np.linalg.norm(matrix, ord = 2)
+            self.trotter_norms.append(temp_norm)
+            self.trotter_operators.append(matrix / temp_norm)
+        
+        for matrix in qdrift_list:
+            temp_norm = np.linalg.norm(matrix, ord = 2)
+            self.qdrift_norms.append(temp_norm)
+            self.qdrift_operators.append(matrix / temp_norm)
 
+        self.spectral_norms += self.trotter_norms + self.qdrift_norms
+        self.hamiltonian_list += self.trotter_operators + self.qdrift_operators
+        if len(qdrift_list) > 0:
+            self.qdrift_sim.set_hamiltonian(norm_list=self.qdrift_norms, mat_list=self.qdrift_operators)
+        elif len(trotter_list) == 0:
+            self.qdrift_sim.clear_hamiltonian()
+
+        if len(trotter_list) > 0:
+            self.trotter_sim.set_hamiltonian(norm_list=self.trotter_norms, mat_list=self.trotter_operators)
+        elif len(trotter_list) == 0:
+            self.trotter_sim.clear_hamiltonian()
+        return 0
 
     ##########################################################################################
     #Simulation Section -- contains functions to call in the workbook to simulate hamiltonians
@@ -567,7 +589,8 @@ class CompositeSim:
     def simulate(self, time, samples, iterations): 
         if (self.nb_optimizer == False) and (self.partition != 'prob'): 
             self.nb = samples  #specifying the number of samples having optimized Nb does nothing
-        if len(self.b_norms) == 1: self.nb = 1 #edge case, dont sameple the same gate over and over again
+        if len(self.b_norms) == 1: 
+            self.nb = 1 #edge case, dont sameple the same gate over and over again
         self.gate_count = 0
         outer_loop_timesteps = compute_trotter_timesteps(2, time / (1. * iterations), self.outer_order)
         self.reset_init_state()
@@ -593,7 +616,7 @@ class CompositeSim:
         infidelity = 1- (sample_fidelity / mcsamples) 
         return infidelity #this is of type array for some reason?
 
-    # A function to analyse the cost of a simulation with a certain error tolerance. The funciton is expensive -- it searches for the point 
+    # A function to analyse the cost of a simulation with a certain error tolerance. The function is expensive -- it searches for the point 
     # (the number of iterations or samples) at which the error tolerance is met, and does so with an exponential then binary search,
     # followed by a linear interpolation.
     def sim_channel_performance(self, time, samples, iterations, mcsamples): #This function is not robust due to mc noise 

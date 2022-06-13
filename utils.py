@@ -151,103 +151,149 @@ def find_optimal_iterations(simulator, hamiltonian_list, time=1., infidelity_thr
     return get_inf(iter_upper)
 
 
+def partition_sim(simulator, partition_type = "prob", weight_threshold = 0.5, optimize = False):
+    if type(partition_type) != type("string"):
+        print("[partition_sim] We only accept strings to describe the partition_type")
+        return 1
+    
+    partition_type = partition_type.lower()
 
-def partitioning(self, weight_threshold):
+    if partition_type == "prob":
+        partition_sim_prob(simulator)
+    
+    elif partition_type == "optimize":
+        partition_sim_optimize(simulator)
+    
+    elif partition_type == "random":
+        partition_sim_random(simulator)
+    
+    elif partition_type == "chop":
+        partition_sim_chop(simulator, weight_threshold)
+    
+    elif partition_type == "optimal_chop":
+        partition_sim_optimal_chop(simulator)
+
+    elif partition_type == "trotter":
+        partition_sim_trotter(simulator)
+
+    elif partition_type == "qdrift":
+        partition_sim_qdrift(simulator)
+    
+    else:
+        print("[partition_sim] Did not recieve valid partition. Valid options are: 'prob', 'optimize', 'random', 'chop', 'optimal_chop', 'trotter', and 'qdrift'.")
+        return 1
+
+def partition_sim_prob(simulator):
+    if simulator.trotter_sim.order > 1:
+         k = simulator.trotter_sim.order/2
+    else: 
+        print("partition not defined for this order") 
+        return 1
+    
+    upsilon = 2*(5**(k -1))
+    lamb = simulator.get_lambda()
+
+    # TODO: how to optimize this quantity? not sure what optimal is without computing gate counts?
+    if simulator.nb_optimizer == True and False:
+        optimal_nb = optimize.minimize(self.prob_nb_optima, self.nb, method='Nelder-Mead', bounds = optimize.Bounds([0], [np.inf], keep_feasible = False)) #Nb attribute serves as an inital geuss in this partition
+        nb_high = int(optimal_nb.x +1)
+        nb_low = int(optimal_nb.x)
+        prob_high = self.prob_nb_optima(nb_high) #check higher, (nb must be int)
+        prob_low = self.prob_nb_optima(nb_low) #check lower 
+        if prob_high > prob_low:
+            self.nb = nb_low
+        else:
+            self.nb = nb_high
+    else:
+        self.nb = int(((lamb * self.time/(self.epsilon))**(1-(1/(2*k))) * ((2*k +1)/(2*k + upsilon))**(1/(2*k)) * (2**(1-(1/k))/ upsilon**(1/(2*k)))) +1)
+    
+    print("Nb is " + str(self.nb))
+    
+    chi = (lamb/len(self.spectral_norms)) * ((self.nb * (self.epsilon/(lamb * self.time))**(1-(1/(2*k))) * 
+    ((2*k + upsilon)/(2*k +1))**(1/(2*k)) * (upsilon**(1/(2*k)) / 2**(1-(1/k))))**(1/2) - 1) 
+    
+    for i in range(len(simulator.spectral_norms)):
+        num = np.random.random()
+        prob = (1- min((1/simulator.spectral_norms[i])*chi, 1))
+        if prob >= num:
+            self.a_norms.append(([i, simulator.spectral_norms[i]]))
+        else:
+            self.b_norms.append(([i, simulator.spectral_norms[i]]))
+    return 0
+
+def partition_sim_optimize(simulator):
+    if simulator.nb_optimizer == True: #if Nb is a parameter we wish to numerically optimize
+        guess = [0.5 for x in range(len(simulator.spectral_norms))] #guess for the weights 
+        guess.append(2) #initial guess for Nb
+        upper_bound = [1 for x in range(len(simulator.spectral_norms))]
+        upper_bound.append(20) #no upper bound for Nb but set to some number we can compute instead of np.inf
+        lower_bound = [0 for x in range(len(simulator.spectral_norms) + 1)]  #lower bound for Nb is 0
+        optimized_weights = optimize.minimize(simulator.nb_first_order_cost, guess, method='Nelder-Mead', bounds=optimize.Bounds(lower_bound, upper_bound))
+        print(optimized_weights.x)
+        for i in range(len(simulator.spectral_norms)):
+            if optimized_weights.x[i] >= weight_threshold:
+                simulator.a_norms.append([i, simulator.spectral_norms[i]])
+            elif optimized_weights.x[i] < weight_threshold:
+                simulator.b_norms.append([i, simulator.spectral_norms[i]])
+        simulator.a_norms = np.array(simulator.a_norms, dtype='complex')
+        simulator.b_norms = np.array(simulator.b_norms, dtype='complex')
+        simulator.nb = int(optimized_weights.x[-1] + 1) #nb must be of type int so take the ceiling 
+        return 0
+
+    if simulator.nb_optimizer == False: #same as above leaving Nb as user-defined
+        guess = [0.5 for x in range(len(simulator.spectral_norms))] #guess for the weights 
+        upper_bound = [1 for x in range(len(simulator.spectral_norms))]
+        lower_bound = [0 for x in range(len(simulator.spectral_norms))]  
+        optimized_weights = optimize.minimize(simulator.first_order_cost, guess, method='Nelder-Mead', bounds=optimize.Bounds(lower_bound, upper_bound)) 
+        print(optimized_weights.x)
+        for i in range(len(simulator.spectral_norms)):
+            if optimized_weights.x[i] >= weight_threshold:
+                simulator.a_norms.append([i, simulator.spectral_norms[i]])
+            elif optimized_weights.x[i] < weight_threshold:
+                simulator.b_norms.append([i, simulator.spectral_norms[i]])
+        simulator.a_norms = np.array(simulator.a_norms, dtype='complex')
+        simulator.b_norms = np.array(simulator.b_norms, dtype='complex')
+        return 0
+
+def partition_sim_random(simulator):
+    for i in range(len(simulator.spectral_norms)):
+        sample = np.random.random()
+        if sample >= 0.5:
+            simulator.a_norms.append([i, simulator.spectral_norms[i]])
+        elif sample < 0.5:
+            simulator.b_norms.append([i, simulator.spectral_norms[i]])
+    simulator.a_norms = np.array(simulator.a_norms, dtype='complex')
+    simulator.b_norms = np.array(simulator.b_norms, dtype='complex')
+    return 0
+
+def partition_sim_chop(simulator, weight_threshold):
+    for i in range(len(simulator.spectral_norms)):
+        if simulator.spectral_norms[i] >= weight_threshold:
+            simulator.a_norms.append(([i, simulator.spectral_norms[i]]))
+        else:
+            simulator.b_norms.append(([i, simulator.spectral_norms[i]]))
+    simulator.a_norms = np.array(simulator.a_norms, dtype='complex')
+    simulator.b_norms = np.array(simulator.b_norms, dtype='complex')
+    return 0
+
+
+def partitioning(simulator, weight_threshold):
         #if ((self.partition == "trotter" or self.partition == "qdrift" or self.partition == "random" or self.partition == "optimize")): #This condition may change for the optimize scheme later
             #print("This partitioning method does not require repartitioning") #Checks that our scheme is sane, prevents unnecessary time wasting
             #return 1 maybe work this in again later?
 
         if self.partition == "prob":
-            if self.trotter_sim.order > 1: k = self.trotter_sim.order/2
-            else: 
-                print("partition not defined for this order") 
-                return 1
             
-            upsilon = 2*(5**(k -1))
-            lamb = sum(self.spectral_norms)
-
-            if self.nb_optimizer == True:
-                optimal_nb = optimize.minimize(self.prob_nb_optima, self.nb, method='Nelder-Mead', bounds = optimize.Bounds([0], [np.inf], keep_feasible = False)) #Nb attribute serves as an inital geuss in this partition
-                nb_high = int(optimal_nb.x +1)
-                nb_low = int(optimal_nb.x)
-                prob_high = self.prob_nb_optima(nb_high) #check higher, (nb must be int)
-                prob_low = self.prob_nb_optima(nb_low) #check lower 
-                if prob_high > prob_low:
-                    self.nb = nb_low
-                else:
-                    self.nb = nb_high
-            else:
-                self.nb = int(((lamb * self.time/(self.epsilon))**(1-(1/(2*k))) * ((2*k +1)/(2*k + upsilon))**(1/(2*k)) * (2**(1-(1/k))/ upsilon**(1/(2*k)))) +1)
-            
-            print("Nb is " + str(self.nb))
-            
-            chi = (lamb/len(self.spectral_norms)) * ((self.nb * (self.epsilon/(lamb * self.time))**(1-(1/(2*k))) * 
-            ((2*k + upsilon)/(2*k +1))**(1/(2*k)) * (upsilon**(1/(2*k)) / 2**(1-(1/k))))**(1/2) - 1) 
-            
-            for i in range(len(self.spectral_norms)):
-                num = np.random.random()
-                prob=(1- min((1/self.spectral_norms[i])*chi, 1))
-                if prob >= num:
-                    self.a_norms.append(([i, self.spectral_norms[i]]))
-                else:
-                    self.b_norms.append(([i, self.spectral_norms[i]]))
-            return 0
         
         #Nelder-Mead optimization protocol based on analytic cost function for first order
         elif self.partition == "optimize": 
-            if self.nb_optimizer == True: #if Nb is a parameter we wish to numerically optimize
-                guess = [0.5 for x in range(len(self.spectral_norms))] #guess for the weights 
-                guess.append(2) #initial guess for Nb
-                upper_bound = [1 for x in range(len(self.spectral_norms))]
-                upper_bound.append(20) #no upper bound for Nb but set to some number we can compute instead of np.inf
-                lower_bound = [0 for x in range(len(self.spectral_norms) + 1)]  #lower bound for Nb is 0
-                optimized_weights = optimize.minimize(self.nb_first_order_cost, guess, method='Nelder-Mead', bounds=optimize.Bounds(lower_bound, upper_bound))
-                print(optimized_weights.x)
-                for i in range(len(self.spectral_norms)):
-                    if optimized_weights.x[i] >= weight_threshold:
-                        self.a_norms.append([i, self.spectral_norms[i]])
-                    elif optimized_weights.x[i] < weight_threshold:
-                        self.b_norms.append([i, self.spectral_norms[i]])
-                self.a_norms = np.array(self.a_norms, dtype='complex')
-                self.b_norms = np.array(self.b_norms, dtype='complex')
-                self.nb = int(optimized_weights.x[-1] + 1) #nb must be of type int so take the ceiling 
-                return 0
-
-            if self.nb_optimizer == False: #same as above leaving Nb as user-defined
-                guess = [0.5 for x in range(len(self.spectral_norms))] #guess for the weights 
-                upper_bound = [1 for x in range(len(self.spectral_norms))]
-                lower_bound = [0 for x in range(len(self.spectral_norms))]  
-                optimized_weights = optimize.minimize(self.first_order_cost, guess, method='Nelder-Mead', bounds=optimize.Bounds(lower_bound, upper_bound)) 
-                print(optimized_weights.x)
-                for i in range(len(self.spectral_norms)):
-                    if optimized_weights.x[i] >= weight_threshold:
-                        self.a_norms.append([i, self.spectral_norms[i]])
-                    elif optimized_weights.x[i] < weight_threshold:
-                        self.b_norms.append([i, self.spectral_norms[i]])
-                self.a_norms = np.array(self.a_norms, dtype='complex')
-                self.b_norms = np.array(self.b_norms, dtype='complex')
-                return 0
+            
         
         elif self.partition == "random":
-            for i in range(len(self.spectral_norms)):
-                sample = np.random.random()
-                if sample >= 0.5:
-                    self.a_norms.append([i, self.spectral_norms[i]])
-                elif sample < 0.5:
-                    self.b_norms.append([i, self.spectral_norms[i]])
-            self.a_norms = np.array(self.a_norms, dtype='complex')
-            self.b_norms = np.array(self.b_norms, dtype='complex')
-            return 0
+            
         
         elif self.partition == "chop": #cutting off at some value defined by the user
-            for i in range(len(self.spectral_norms)):
-                if self.spectral_norms[i] >= weight_threshold:
-                    self.a_norms.append(([i, self.spectral_norms[i]]))
-                else:
-                    self.b_norms.append(([i, self.spectral_norms[i]]))
-            self.a_norms = np.array(self.a_norms, dtype='complex')
-            self.b_norms = np.array(self.b_norms, dtype='complex')
-            return 0
+            
 
         elif self.partition == "optimal chop": 
             #This partition method is to be used differently than the others in the notebook. It optimizes the gate cost, 
