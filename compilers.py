@@ -19,7 +19,7 @@ from skopt import gbrt_minimize
 from skopt.space import Real, Integer
 from skopt.utils import use_named_args
 import cProfile, pstats, io
-from utils import *
+
 
 #A simple profiler. To use this, place @profile above the function of interest
 def profile(fnc):
@@ -47,7 +47,7 @@ def conditional_decorator(dec, condition):
     return decorator
 
 FLOATING_POINT_PRECISION = 1e-10
-MC_SAMPLES_DEFAULT=100
+
 
 # Helper function to compute the timesteps to matrix exponentials in a higher order
 # product formula. This can be done with only the length of an array, the time, and
@@ -460,11 +460,9 @@ class CompositeSim:
 
         # NOTE: This sets the default behavior to be a fully Trotter channel!
         self.set_partition(hamiltonian_list, [])
+        self.prep_hamiltonian_lists(hamiltonian_list)
         np.random.seed(self.rng_seed)
-        self.partitioning(self.weight_threshold) #note error was raised because partition() is a built in python method
 
-        print("There are " + str(len(self.a_norms)) + " terms in Trotter") #make the partition known
-        print("There are " + str(len(self.b_norms)) + " terms in QDrift")
         if nb_optimizer == True:
             print("Nb is equal to " + str(self.nb))
 
@@ -482,8 +480,10 @@ class CompositeSim:
 
     def get_hamiltonian_list(self):
         ret = []
-        for ix in range(len(self.hamiltonian_list)):
-            ret.append(np.copy(self.hamiltonian_list[ix]) * self.spectral_norms[ix])
+        for ix in range(len(self.trotter_norms)):
+            ret.append(self.trotter_norms[ix] * self.trotter_operators[ix])
+        for jx in range(len(self.qdrift_norms)):
+            ret.append(self.qdrift_norms[jx] * self.qdrift_operators[jx])
         return ret
     
     def get_lambda(self):
@@ -494,6 +494,11 @@ class CompositeSim:
         self.initial_state[0] = 1.
         self.trotter_sim.reset_init_state()
         self.qdrift_sim.reset_init_state()
+
+    def set_initial_state(self, state):
+        self.initial_state = state
+        self.trotter_sim.set_initial_state(state)
+        self.qdrift_sim.set_initial_state(state)
 
 
     ################################################################
@@ -565,8 +570,11 @@ class CompositeSim:
             self.trotter_sim.set_hamiltonian(norm_list=self.trotter_norms, mat_list=self.trotter_operators)
         elif len(trotter_list) == 0:
             self.trotter_sim.clear_hamiltonian()
+        
         return 0
 
+    def print_partition(self):
+        print("[CompositeSim] Number of Trotter, Qdrift terms: ", len(self.trotter_norms), ", ", len(self.qdrift_norms))
     ##########################################################################################
     #Simulation Section -- contains functions to call in the workbook to simulate hamiltonians
     ##########################################################################################
@@ -589,7 +597,7 @@ class CompositeSim:
     def simulate(self, time, samples, iterations): 
         if (self.nb_optimizer == False) and (self.partition != 'prob'): 
             self.nb = samples  #specifying the number of samples having optimized Nb does nothing
-        if len(self.b_norms) == 1: 
+        if len(self.qdrift_norms) == 1: 
             self.nb = 1 #edge case, dont sameple the same gate over and over again
         self.gate_count = 0
         outer_loop_timesteps = compute_trotter_timesteps(2, time / (1. * iterations), self.outer_order)
