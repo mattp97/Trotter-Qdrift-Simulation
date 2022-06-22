@@ -21,7 +21,9 @@ from skopt.utils import use_named_args
 import cProfile, pstats, io
 from compilers import CompositeSim, TrotterSim, QDriftSim, DensityMatrixSim
 
-MC_SAMPLES_DEFAULT=10
+MC_SAMPLES_DEFAULT = 10
+COST_LOOP_DEPTH = 30
+ITERATION_UPPER_BOUND_MAX = 20
 
 # A simple function that computes the graph distance between two sites
 def dist(site1, site2):
@@ -155,8 +157,8 @@ def exact_time_evolution(hamiltonian_list, time, initial_state):
 #              of samples is varied. If a Composite simulator is used then iterations is varied while QDrift
 #              samples are held fixed.
 # - mc_samples: Monte Carlo samples for wave function states, shouldn't be necessary with density matrices?
-# Output: the gate cost necessary for the simulator to meet the threshold.
-def find_optimal_cost(simulator, time, infidelity_threshold, mc_samples=MC_SAMPLES_DEFAULT):
+# Returns (cost, iterations) - a tuple consisting of the gate cost and number of iterations needed to satisfy is_threshold_met 
+def find_optimal_cost(simulator, time, infidelity_threshold, heuristic = -1, mc_samples=MC_SAMPLES_DEFAULT):
     hamiltonian_list = simulator.get_hamiltonian_list()
     
     # choose random basis state to start out with
@@ -171,45 +173,53 @@ def find_optimal_cost(simulator, time, infidelity_threshold, mc_samples=MC_SAMPL
     elif type(simulator) == QDriftSim:
         get_inf = lambda x: mutli_infidelity_sample(simulator, time, exact_final_state, nbsamples= x, mc_samples=mc_samples)
 
-    # compute reasonable upper and lower bounds
+    # Branch if we have a heuristic for where the optimal iterations might be. If we do then we need to see if it currently
+    # gives an uppper or lower bound, then use a 20% deviation from the heuristic for the corresponding opposite bound.
+    # If we do not have a heuristic use an exponential backoff to provide bounds.
     iter_lower = 1
     iter_upper = 2 ** 20
-    # print("[find_optimal_cost] finding bounds")
-    for n in range(20):
-        # print("[find_optimal_cost] n: ", n)
-        inf_tup, costs = zip(*get_inf(2 ** n))
-        inf_list = list(inf_tup)
-        # print("[find_optimal_cost] mean infidelity:", np.mean(inf_list))
-
-        if is_threshold_met(inf_list, infidelity_threshold) == False:
-            iter_lower = 2 ** n
+    if heuristic > 0:
+        inf_tup, costs = zip(*get_inf(heuristic))
+        if is_threshold_met(list(inf_tup), infidelity_threshold):
+            iter_upper = heuristic
+            iter_lower = int(heuristic / 2)
         else:
-            iter_upper = 2 ** n
-            break
+            iter_upper = heuristic * 2
+            iter_lower = heuristic
+    else:
+        for n in range(ITERATION_UPPER_BOUND_MAX):
+            inf_tup, costs = zip(*get_inf(2 ** n))
+            inf_list = list(inf_tup)
+            if is_threshold_met(inf_list, infidelity_threshold) == False:
+                iter_lower = 2 ** n
+            else:
+                iter_upper = 2 ** n
+                break
+        # note: - 1 is included due to the use of range() above
+        if iter_upper == 2**(ITERATION_UPPER_BOUND_MAX - 1):
+            print("[find_optimal_cost] Iteration depth reached")
 
     # bisection search until we find it.
     mid = 1
     count = 0
-    current_inf = (1., 1)
-    # print("[find_optimal_cost] beginning search with lower, upper:", iter_lower, iter_upper)
-    while iter_upper - iter_lower  > 1 and count < 30:
+    costs = 0
+    while iter_upper - iter_lower  > 1 and count < COST_LOOP_DEPTH:
         count += 1
         mid = (iter_upper + iter_lower) / 2.0
         iters = math.ceil(mid)
-        # print("[find_optimal_cost] count:", count, ", upper:",iter_upper, ", lower: ", iter_lower, ", mid:", mid)
         
         inf_tup, costs = zip(*get_inf(iters))
         infidelities = list(inf_tup)
-        # print("[find_optimal_cost] current_inf:", np.mean(infidelities))
         if is_threshold_met(infidelities, infidelity_threshold):
             iter_lower = iters
         else:
             iter_upper = iters
+    if count == COST_LOOP_DEPTH:
+        print("[find_optimal_cost] Reached loop depth, results may be inaccurate")
     ret = get_inf(iter_upper)
     inf_tup, costs = zip(*ret)
-    # print("[find_optimal_cost] iters:", iter_upper, ", inf_mean: ", np.mean(list(inf_tup)), " +- (", np.std(list(inf_tup)), ")")
-    # print("[find_optimal_cost] Average cost:", np.mean(list(costs)))
-    return np.mean(list(costs))
+
+    return (np.mean(costs), iter_upper)
 
 # Computes and sets a partition
 # Inputs:
@@ -361,7 +371,7 @@ def partition_sim_optimal_chop(simulator, time, epsilon):
     @use_named_args(dimensions=dimensions)
     def obj_fn(weight):
         partition_sim_chop(simulator, weight)
-        return find_optimal_cost(simulator, time, epsilon)
+        return find_optimal_cost(simulator, time, epsilon)[0]
     result = gbrt_minimize(obj_fn, dimensions=dimensions, n_calls=30, n_initial_points=5, random_state=4, verbose=True, acq_func="LCB")
     print("result.fun: ", result.fun)
     print("result.x: ", result.x)
@@ -558,18 +568,35 @@ def partition_sim_optimal_chop_2(simulator):
     return 0
 
 def partition_sim_trotter(simulator):
-    simulator.trotter_operators = simulator.hamiltonian_list
-    simulator.trotter_norms = simulator.spectral_norms
-    simulator.qdrift_operators = []
-    simulator.qdrift_norms = []
+    ham = simulator.get_hamiltonian_list()
+    simulator.set_partition(ham, [])
     return 0
 
 def partition_sim_qdrift(simulator):
-    simulator.qdrift_operators = simulator.hamiltonian_list
-    simulator.qdrift_norms = simulator.spectral_norms
-    simulator.trotter_operators = []
-    simulator.trotter_norms = []
+    ham = simulator.get_hamiltonian_list()
+    simulator.set_partition([], ham)
     return 0
+
+# Inputs
+# - hamiltonian_list: list of terms to be partitioned
+# - prob_list: list of probabilities to sample a partition. Standard we are using is prob = 1.0 means Trotter, 0.0 means QDrift
+# Returns a tuple of lists (trotter, qdrift) to be used in a partitioner.
+# TODO- refactor existing code to use this function.
+def sample_probabilistic_partition(hamiltonian_list, prob_list):
+    if len(hamiltonian_list) != len(prob_list):
+        print("[sample_probabilistic_partition] lengths of lists do not match")
+        return 1
+    trotter, qdrift = [], []
+    for ix in range(len(hamiltonian_list)):
+        if prob_list[ix] > 1.0 or prob_list[ix] < 0.0:
+            print("[sample_probabilistic_partition] probability not within [0.0, 1.0] encountered")
+            return 1
+        sample = np.random.random()
+        if sample <= prob_list[ix]:
+            trotter.append(hamiltonian_list[ix])
+        else:
+            qdrift.append(hamiltonian_list[ix])
+    return (trotter, qdrift)
 
 def test():
     hamiltonian = graph_hamiltonian(2, 1, 1)
