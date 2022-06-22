@@ -241,6 +241,7 @@ class QDriftSim:
         self.exp_op_cache = dict()
 
         # Use the first computational basis state as the initial state until the user specifies.
+        self.prep_hamiltonian_lists(hamiltonian_list)
         if len(hamiltonian_list) == 0:
             self.initial_state = np.zeros((1,1))
         else:
@@ -248,7 +249,7 @@ class QDriftSim:
         self.initial_state[0] = 1
         self.final_state = np.copy(self.initial_state)
 
-        self.prep_hamiltonian_lists(hamiltonian_list)
+        
         np.random.seed(self.rng_seed)
 
     def prep_hamiltonian_lists(self, ham_list):
@@ -574,7 +575,7 @@ class CompositeSim:
         return 0
 
     def print_partition(self):
-        print("[CompositeSim] Number of Trotter, Qdrift terms: ", len(self.trotter_norms), ", ", len(self.qdrift_norms))
+        print("[CompositeSim] # of Trotter terms:", len(self.trotter_norms), ", # of Qdrift terms: ", len(self.qdrift_norms), ", and Nb = ", self.nb)
     ##########################################################################################
     #Simulation Section -- contains functions to call in the workbook to simulate hamiltonians
     ##########################################################################################
@@ -594,14 +595,10 @@ class CompositeSim:
         return int(sample_guess/2)
 
     #Simulate and error scaling
-    def simulate(self, time, samples, iterations): 
-        if (self.nb_optimizer == False) and (self.partition != 'prob'): 
-            self.nb = samples  #specifying the number of samples having optimized Nb does nothing
-        if len(self.qdrift_norms) == 1: 
-            self.nb = 1 #edge case, dont sameple the same gate over and over again
+    def simulate(self, time, iterations): 
         self.gate_count = 0
         outer_loop_timesteps = compute_trotter_timesteps(2, time / (1. * iterations), self.outer_order)
-        self.reset_init_state()
+
         current_state = np.copy(self.initial_state)
         for i in range(iterations):
             for (ix, sim_time) in outer_loop_timesteps:

@@ -102,7 +102,7 @@ def exact_time_evolution_density(hamiltonian_list, time, initial_rho):
 # TrotterSim, QDriftSim, CompositeSim
 # Outputs: a single shot estimate of the infidelity according to the exact output provided. 
 def single_infidelity_sample(simulator, time, exact_output, iterations = 1, nbsamples = 1):
-    simulator.reset_init_state()
+
     sim_output = []
 
     if type(simulator) == QDriftSim:
@@ -112,7 +112,7 @@ def single_infidelity_sample(simulator, time, exact_output, iterations = 1, nbsa
         sim_output = simulator.simulate(time, iterations)
     
     if type(simulator) == CompositeSim:
-        sim_output = simulator.simulate(time, nbsamples, iterations)
+        sim_output = simulator.simulate(time, iterations)
 
     infidelity = 1 - (np.abs(np.dot(exact_output.conj().T, sim_output)).flat[0])**2
     return (infidelity, simulator.gate_count)
@@ -156,10 +156,8 @@ def exact_time_evolution(hamiltonian_list, time, initial_state):
 #              samples are held fixed.
 # - mc_samples: Monte Carlo samples for wave function states, shouldn't be necessary with density matrices?
 # Output: the gate cost necessary for the simulator to meet the threshold.
-def find_optimal_cost(simulator, mc_samples=MC_SAMPLES_DEFAULT):
+def find_optimal_cost(simulator, time, infidelity_threshold, mc_samples=MC_SAMPLES_DEFAULT):
     hamiltonian_list = simulator.get_hamiltonian_list()
-    time = simulator.time
-    infidelity_threshold = simulator.epsilon
     
     # choose random basis state to start out with
     init = 0 * simulator.initial_state
@@ -193,7 +191,7 @@ def find_optimal_cost(simulator, mc_samples=MC_SAMPLES_DEFAULT):
     mid = 1
     count = 0
     current_inf = (1., 1)
-    print("[find_optimal_cost] beginning search with lower, upper:", iter_lower, iter_upper)
+    # print("[find_optimal_cost] beginning search with lower, upper:", iter_lower, iter_upper)
     while iter_upper - iter_lower  > 1 and count < 30:
         count += 1
         mid = (iter_upper + iter_lower) / 2.0
@@ -220,7 +218,9 @@ def find_optimal_cost(simulator, mc_samples=MC_SAMPLES_DEFAULT):
 # - weight_threshold: for "chop" partition, determines the spectral norm cutoff for each term to end up in QDrift
 # - optimize: for some partitions?
 # - nb_scaling: a parametrization of nb within it's lower bound. Follows the scaling (1 + c)^2 * lower_bound. see paper for lower_bound
-def partition_sim(simulator, partition_type = "prob", chop_threshold = 0.5, optimize = False, nb_scaling = 0.0):
+# - time: required for probabilistic
+# - epsilon: required for probabilistic
+def partition_sim(simulator, partition_type = "prob", chop_threshold = 0.5, optimize = False, nb_scaling = 0.0, time=0.01, epsilon=0.05):
     if type(partition_type) != type("string"):
         print("[partition_sim] We only accept strings to describe the partition_type")
         return 1
@@ -228,7 +228,7 @@ def partition_sim(simulator, partition_type = "prob", chop_threshold = 0.5, opti
     partition_type = partition_type.lower()
 
     if partition_type == "prob":
-        partition_sim_prob(simulator, nb_scaling, optimize)
+        partition_sim_prob(simulator, time, epsilon, nb_scaling, optimize)
     
     elif partition_type == "optimize":
         partition_sim_optimize(simulator)
@@ -240,7 +240,7 @@ def partition_sim(simulator, partition_type = "prob", chop_threshold = 0.5, opti
         partition_sim_chop(simulator, chop_threshold)
     
     elif partition_type == "optimal_chop":
-        partition_sim_optimal_chop(simulator)
+        partition_sim_optimal_chop(simulator, time, epsilon)
 
     elif partition_type == "trotter":
         partition_sim_trotter(simulator)
@@ -252,27 +252,23 @@ def partition_sim(simulator, partition_type = "prob", chop_threshold = 0.5, opti
         print("[partition_sim] Did not recieve valid partition. Valid options are: 'prob', 'optimize', 'random', 'chop', 'optimal_chop', 'trotter', and 'qdrift'.")
         return 1
 
-def partition_sim_prob(simulator, nb_scaling, optimize):
+def partition_sim_prob(simulator, time, epsilon, nb_scaling, optimize):
     if simulator.trotter_sim.order > 1:
          k = simulator.trotter_sim.order/2
     else: 
-        print("partition not defined for this order") 
+        print("[partition_sim] partition not defined for this order") 
         return 1
     
     upsilon = 2*(5**(k -1))
     lamb = simulator.get_lambda()
-    nb = simulator.nb
-    t = simulator.time
-    eps = simulator.epsilon
     hamiltonian = simulator.get_hamiltonian_list()
 
-    coefficient_1 = (lamb * t / eps)**(1 - (1 / (2 * k)))
+    coefficient_1 = (lamb * time / epsilon)**(1 - (1 / (2 * k)))
     coefficient_2 = ((2 * k + 1) / (2 * k + upsilon))**(1 / (2 * k))
     coefficient_3 = 2**(1-(1/k))/ upsilon**(1/(2 * k))
     nb = int( coefficient_1 * coefficient_2 * coefficient_3 *((1 + nb_scaling)**2) )
-    print("[partitioning] Nb is ", nb)
-    # chi = (lamb/len(self.spectral_norms)) * ((self.nb * (self.epsilon/(lamb * self.time))**(1-(1/(2*k))) * 
-    # ((2*k + upsilon)/(2*k +1))**(1/(2*k)) * (upsilon**(1/(2*k)) / 2**(1-(1/k))))**(1/2) - 1)
+    simulator.nb = nb
+
     # below value for chi is based on nb being computed as (1 + c)^2 * lower_bound, which gives chi this nice form
     chi = lamb * nb_scaling / len(hamiltonian)
 
@@ -360,15 +356,16 @@ def partition_sim_chop(simulator, weight_threshold):
     simulator.set_partition(trotter, qdrift)
     return 0
 
-def partition_sim_optimal_chop(simulator):
+def partition_sim_optimal_chop(simulator, time, epsilon):
     dimensions = [Real(name='weight', low = 0, high = max(simulator.spectral_norms))]
     @use_named_args(dimensions=dimensions)
     def obj_fn(weight):
         partition_sim_chop(simulator, weight)
-        find_optimal_cost(simulator)
+        return find_optimal_cost(simulator, time, epsilon)
     result = gbrt_minimize(obj_fn, dimensions=dimensions, n_calls=30, n_initial_points=5, random_state=4, verbose=True, acq_func="LCB")
     print("result.fun: ", result.fun)
     print("result.x: ", result.x)
+    print("result:", result)
 
 def partition_sim_optimal_chop_2(simulator):
     #This partition method is to be used differently than the others in the notebook. It optimizes the gate cost, 
@@ -576,18 +573,30 @@ def partition_sim_qdrift(simulator):
 
 def test():
     hamiltonian = graph_hamiltonian(2, 1, 1)
-    compsim = CompositeSim(hamiltonian_list=hamiltonian, epsilon=0.05, inner_order=2)
+    t = 0.01
+    eps = 0.1
+    compsim = CompositeSim(hamiltonian_list=hamiltonian, inner_order=2)
+    trottsim = TrotterSim(hamiltonian_list=hamiltonian)
+    qsim = QDriftSim(hamiltonian_list=hamiltonian)
+    partition_sim(compsim, "prob", nb_scaling=.01)
+    compsim.print_partition()
+    partition_sim(compsim, "prob", nb_scaling=.05)
+    compsim.print_partition()
     partition_sim(compsim, "prob", nb_scaling=.1)
     compsim.print_partition()
     partition_sim(compsim, "prob", nb_scaling=.5)
     compsim.print_partition()
-    partition_sim(compsim, "prob", nb_scaling=1.)
-    compsim.print_partition()
-    partition_sim(compsim, "prob", nb_scaling=1.5)
-    compsim.print_partition()
+    partition_sim(compsim, "prob", nb_scaling=0.05)
     compsim.reset_init_state()
-    print("testing find optimal cost")
-    print(find_optimal_cost(compsim))
-
+    print("Check to see if the hamiltonian has remained the same after many partitionings.")
+    hamiltonian_copy = compsim.get_hamiltonian_list()
+    print("Difference norm:", np.linalg.norm(sum(hamiltonian) - sum(hamiltonian_copy)))
+    compsim.print_partition()
+    print("testing trotter")
+    print(find_optimal_cost(trottsim, .01, .1))
+    print(find_optimal_cost(compsim, 0.01, .1))
+    print("#" * 25)
+    print("Now testing optimal chop")
+    partition_sim(compsim, "optimal_chop")
 
 test()
