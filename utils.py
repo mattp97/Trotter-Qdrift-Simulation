@@ -249,7 +249,7 @@ def find_optimal_cost(simulator, time, infidelity_threshold, heuristic = -1, mc_
 
 # Computes the expected cost of a probabilistic partitioning scheme. 
 def expected_cost(simulator, partition_probs, time, infidelity_threshold, heuristic = -1, num_samples = MC_SAMPLES_DEFAULT):
-    print("#" * 30)
+    print("#" * 75)
     if type(simulator) != CompositeSim:
         print("[expected_cost] Currently only defined for composite simulators.")
         return 1
@@ -428,7 +428,7 @@ def partition_sim_gbrt_prob(simulator, time, epsilon):
         simulator.nb = nb
         return expected_cost(simulator, probs, time, epsilon)
     
-    result = gbrt_minimize(obj_fn, dimensions=dimensions, x0=[0.0]*len(hamiltonian) + [1], n_calls=20, verbose=True, acq_func="LCB")
+    result = gbrt_minimize(obj_fn, dimensions=dimensions, x0=[1.0]*len(hamiltonian) + [1], n_calls=20, verbose=True, acq_func="LCB")
     print("results:")
     print("fun:", result.fun)
     print("x:", result.x)
