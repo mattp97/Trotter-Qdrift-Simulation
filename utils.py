@@ -2,6 +2,7 @@ from ast import And
 from asyncore import loop
 from mimetypes import init
 from operator import matmul
+from cirq import sample
 import numpy as np
 import matplotlib.pyplot as plt
 import statistics
@@ -23,7 +24,7 @@ from compilers import CompositeSim, TrotterSim, QDriftSim, DensityMatrixSim
 
 MC_SAMPLES_DEFAULT = 10
 COST_LOOP_DEPTH = 30
-ITERATION_UPPER_BOUND_MAX = 20
+ITERATION_UPPER_BOUND_MAX = 20 # specifies power of 2 for maximum number of iterations to search through
 
 # A simple function that computes the graph distance between two sites
 def dist(site1, site2):
@@ -148,6 +149,29 @@ def exact_time_evolution(hamiltonian_list, time, initial_state):
 
     return linalg.expm(1j * sum(hamiltonian_list) * time) @ initial_state
 
+# Performs an exponential backoff to find an iteration bound (upper or lower)
+# Inputs
+# infidelity_fn: a callable that returns a list of infidelities to be fed into is_threshold_met
+# infidelity_bound: the infidelity_threshold needed for is_threshold_met
+# iter_bound: the current guess for the iteration bound
+# is_lower_bound: boolean to tell you if we are trying to search for an upper or lower bound
+# returns - The first value it finds that satisfies the upper/lower bound invariant
+def get_iteration_bound(infidelity_fn, infidelity_bound, iter_bound, is_lower_bound):
+    curr_guess = iter_bound
+    for i in range(ITERATION_UPPER_BOUND_MAX):
+        if is_threshold_met(infidelity_fn(curr_guess), infidelity_bound):
+            if is_lower_bound:
+                curr_guess = math.ceil(curr_guess / 2)
+            else:
+                return curr_guess
+        else:
+            if is_lower_bound:
+                return curr_guess
+            else:
+                curr_guess = int(curr_guess * 2)
+    print("[get_iteration_bound] Iteration upper bound exceeded. Proceed with caution.")
+    return curr_guess
+
 # TODO: take in a "guess" parameter which tells you a ballpark. Then search around there, avoiding the need for exponential
 #       backoff and then binary search.
 # Varies the number of iterations needed for a simulator to acheive its infidelity threshold. WARNING: will modify the input
@@ -167,38 +191,36 @@ def find_optimal_cost(simulator, time, infidelity_threshold, heuristic = -1, mc_
     simulator.set_initial_state(init)
     exact_final_state = exact_time_evolution(hamiltonian_list, time, initial_state=init)
 
-    # now we can simplify infidelity to nice lambda, NOTE get_inf returns a TUPLE 
+    # now we can simplify infidelity to nice lambda, NOTE get_inf_and_cost returns a TUPLE 
     if type(simulator) == TrotterSim or type(simulator) == CompositeSim:
-        get_inf = lambda x: mutli_infidelity_sample(simulator, time, exact_final_state, iterations = x, mc_samples=mc_samples)
+        get_inf_and_cost = lambda x: mutli_infidelity_sample(simulator, time, exact_final_state, iterations = x, mc_samples=mc_samples)
     elif type(simulator) == QDriftSim:
-        get_inf = lambda x: mutli_infidelity_sample(simulator, time, exact_final_state, nbsamples= x, mc_samples=mc_samples)
-
+        get_inf_and_cost = lambda x: mutli_infidelity_sample(simulator, time, exact_final_state, nbsamples= x, mc_samples=mc_samples)
+    
+    def get_inf(x):
+        inf_tup, _ = zip(*get_inf_and_cost(x))
+        return list(inf_tup)
+    
     # Branch if we have a heuristic for where the optimal iterations might be. If we do then we need to see if it currently
     # gives an uppper or lower bound, then use a 20% deviation from the heuristic for the corresponding opposite bound.
     # If we do not have a heuristic use an exponential backoff to provide bounds.
+    # TODO: this is ~kind of~ sloppy, could probably convert the helper function into just "compute_iteration_bounds" and have
+    # it handle all of this logic.
     iter_lower = 1
     iter_upper = 2 ** 20
     if heuristic > 0:
-        inf_tup, costs = zip(*get_inf(heuristic))
+        inf_tup, costs = zip(*get_inf_and_cost(heuristic))
         if is_threshold_met(list(inf_tup), infidelity_threshold):
             iter_upper = heuristic
-            iter_lower = int(heuristic / 2)
+            iter_lower = get_iteration_bound(get_inf, infidelity_threshold, heuristic, True)
         else:
-            iter_upper = heuristic * 2
+            iter_upper = get_iteration_bound(get_inf, infidelity_threshold, heuristic, False)
             iter_lower = heuristic
     else:
-        for n in range(ITERATION_UPPER_BOUND_MAX):
-            inf_tup, costs = zip(*get_inf(2 ** n))
-            inf_list = list(inf_tup)
-            if is_threshold_met(inf_list, infidelity_threshold) == False:
-                iter_lower = 2 ** n
-            else:
-                iter_upper = 2 ** n
-                break
-        # note: - 1 is included due to the use of range() above
-        if iter_upper == 2**(ITERATION_UPPER_BOUND_MAX - 1):
-            print("[find_optimal_cost] Iteration depth reached")
-
+        iter_upper = get_iteration_bound(get_inf, infidelity_threshold, 1, False)
+        # NOTE: this lower bound should work because get_iteration_bound doubles until it finds an upper so half of this should be a lower.
+        iter_lower = math.floor(iter_upper / 2) 
+    print("[find_optimal_cost] iter_lower, iter_upper:", iter_lower, ", ", iter_upper)
     # bisection search until we find it.
     mid = 1
     count = 0
@@ -208,18 +230,42 @@ def find_optimal_cost(simulator, time, infidelity_threshold, heuristic = -1, mc_
         mid = (iter_upper + iter_lower) / 2.0
         iters = math.ceil(mid)
         
-        inf_tup, costs = zip(*get_inf(iters))
+        inf_tup, costs = zip(*get_inf_and_cost(iters))
         infidelities = list(inf_tup)
+        # upper bounds always satisfy the threshold. 
         if is_threshold_met(infidelities, infidelity_threshold):
-            iter_lower = iters
-        else:
             iter_upper = iters
+        else:
+            iter_lower = iters
     if count == COST_LOOP_DEPTH:
         print("[find_optimal_cost] Reached loop depth, results may be inaccurate")
-    ret = get_inf(iter_upper)
+    ret = get_inf_and_cost(iter_upper)
     inf_tup, costs = zip(*ret)
-
+    print("[find_optimal_cost] computed infidelity avg:", np.mean(list(inf_tup)))
     return (np.mean(costs), iter_upper)
+
+# Computes the expected cost of a probabilistic partitioning scheme. 
+def expected_cost(simulator, partition_probs, time, infidelity_threshold, heuristic = -1, samples = MC_SAMPLES_DEFAULT):
+    if type(simulator) != CompositeSim:
+        print("[expected_cost] Currently only defined for composite simulators.")
+        return 1
+    
+    hamiltonian_list = simulator.get_hamiltonian_list()
+    if len(hamiltonian_list) != len(partition_probs):
+        print("[expected_cost] Incorrect length probabilities. # of Hamiltonian terms:", len(hamiltonian_list), ", # of probabailities:", len(partition_probs))
+        return 1
+    costs, iters = [], []
+    for sample in samples:
+        trotter, qdrift = sample_probabilistic_partition(hamiltonian_list, partition_probs)
+        simulator.set_partition(trotter, qdrift)
+        if len(iters) > 0:
+            prior_iters = iters[-1]
+        else:
+            prior_iters = -1
+        sampled_cost, sampled_iters = find_optimal_cost(simulator, time, infidelity_threshold, heuristic=prior_iters)
+        costs.append(sampled_cost)
+        iters.append(sampled_iters)
+    return np.mean(costs)
 
 # Computes and sets a partition
 # Inputs:
@@ -281,17 +327,8 @@ def partition_sim_prob(simulator, time, epsilon, nb_scaling, optimize):
 
     # below value for chi is based on nb being computed as (1 + c)^2 * lower_bound, which gives chi this nice form
     chi = lamb * nb_scaling / len(hamiltonian)
-
-    trotter = []
-    qdrift = []
-    for ix in range(len(hamiltonian)):
-        sample = np.random.random()
-        spectral_norm = np.linalg.norm(hamiltonian[ix], ord=2)
-        qdrift_prob = min(1, chi / spectral_norm) 
-        if sample < qdrift_prob:
-            qdrift.append(hamiltonian[ix])
-        else:
-            trotter.append(hamiltonian[ix])
+    probs = [1 - min(1, chi / np.linalg.norm(hamiltonian[ix])) for ix in range(len(hamiltonian))]
+    trotter, qdrift = sample_probabilistic_partition(hamiltonian, probs)
     simulator.set_partition(trotter, qdrift)
 
     # TODO: how to optimize this quantity? not sure what optimal is without computing gate counts?
@@ -344,13 +381,7 @@ def partition_sim_optimize(simulator):
 
 def partition_sim_random(simulator):
     hamiltonian = simulator.get_hamiltonian_list()
-    trotter, qdrift = [], []
-    for ix in range(len(hamiltonian)):
-        sample = np.random.random()
-        if sample >= 0.5:
-            trotter.append(hamiltonian[ix])
-        else:
-            qdrift.append(hamiltonian[ix])
+    trotter, qdrift = sample_probabilistic_partition(hamiltonian, [0.5] * len(hamiltonian))
     simulator.set_partition(trotter, qdrift)
     return 0
 
@@ -404,13 +435,13 @@ def partition_sim_optimal_chop_2(simulator):
         self.repartition(self.time, weight_threshold = weight_threshold) #time is being dealt with in a weird way
     
         exact_state = exact_time_evolution(self.unparsed_hamiltonian, self.time, self.initial_state)
-        get_inf = lambda x: self.sample_channel_inf(self.time, samples = samples, iterations = x, mcsamples = mcsamples, exact_state = exact_state)
+        get_inf_and_cost = lambda x: self.sample_channel_inf(self.time, samples = samples, iterations = x, mcsamples = mcsamples, exact_state = exact_state)
         median_samples = 1
         lower_bound = 1
         upper_bound = 1
         
         #Exponential search to set upper bound, then binary search in that interval
-        infidelity = get_inf(lower_bound)
+        infidelity = get_inf_and_cost(lower_bound)
         if infidelity < self.epsilon:
             print("SAMPLE COUNT: " + str(samples))
             print("[sim_channel_performance] Iterations too large, already below error threshold")
@@ -419,7 +450,7 @@ def partition_sim_optimal_chop_2(simulator):
         break_flag = False
         upper_bound = upper_bound*2 
         for n in range(10):
-            infidelity = get_inf(upper_bound) 
+            infidelity = get_inf_and_cost(upper_bound) 
             if infidelity < self.epsilon:
                 break_flag = True
                 break
@@ -444,8 +475,8 @@ def partition_sim_optimal_chop_2(simulator):
             inf_plus = []
             inf_minus = []
             for n in range(median_samples):
-                inf_plus.append(get_inf(mid+2))
-                inf_minus.append(get_inf(mid-2))
+                inf_plus.append(get_inf_and_cost(mid+2))
+                inf_minus.append(get_inf_and_cost(mid-2))
             med_inf_plus = statistics.median(inf_plus)
             med_inf_minus = statistics.median(inf_minus)
             print((med_inf_minus - self.epsilon, self.epsilon - med_inf_plus, upper_bound, lower_bound))
@@ -461,10 +492,10 @@ def partition_sim_optimal_chop_2(simulator):
 
         #Compute some surrounding points and interpolate
         for i in range (mid+1, mid +3):
-            infidelity = get_inf(i)
+            infidelity = get_inf_and_cost(i)
             good_inf.append([self.gate_count, float(infidelity)])
         for j in range (max(mid-2, 1), mid +1): #catching an edge case
-            infidelity = get_inf(j)
+            infidelity = get_inf_and_cost(j)
             bad_inf.append([self.gate_count, float(infidelity)])
         #Store the points to interpolate
         good_inf = np.array(good_inf)
@@ -483,13 +514,13 @@ def partition_sim_optimal_chop_2(simulator):
         self.repartition(self.time, weight_threshold = weight_threshold) #time is being dealt with in a weird way
     
         exact_state = exact_time_evolution(self.unparsed_hamiltonian, self.time, self.initial_state)
-        get_inf = lambda x: self.sample_channel_inf(self.time, samples = samples, iterations = x, mcsamples = mcsamples, exact_state = exact_state)
+        get_inf_and_cost = lambda x: self.sample_channel_inf(self.time, samples = samples, iterations = x, mcsamples = mcsamples, exact_state = exact_state)
         median_samples = 1
         lower_bound = 1
         upper_bound = 1
         
         #Exponential search to set upper bound, then binary search in that interval
-        infidelity = get_inf(lower_bound)
+        infidelity = get_inf_and_cost(lower_bound)
         if infidelity < self.epsilon:
             print("SAMPLE COUNT: " + str(samples))
             print("[sim_channel_performance] Iterations too large, already below error threshold")
@@ -498,7 +529,7 @@ def partition_sim_optimal_chop_2(simulator):
         break_flag = False
         upper_bound = upper_bound*2 
         for n in range(10):
-            infidelity = get_inf(upper_bound) 
+            infidelity = get_inf_and_cost(upper_bound) 
             if infidelity < self.epsilon:
                 break_flag = True
                 break
@@ -523,8 +554,8 @@ def partition_sim_optimal_chop_2(simulator):
             inf_plus = []
             inf_minus = []
             for n in range(median_samples):
-                inf_plus.append(get_inf(mid+2))
-                inf_minus.append(get_inf(mid-2))
+                inf_plus.append(get_inf_and_cost(mid+2))
+                inf_minus.append(get_inf_and_cost(mid-2))
             med_inf_plus = statistics.median(inf_plus)
             med_inf_minus = statistics.median(inf_minus)
             print((med_inf_minus - self.epsilon, self.epsilon - med_inf_plus, upper_bound, lower_bound))
@@ -540,10 +571,10 @@ def partition_sim_optimal_chop_2(simulator):
 
         #Compute some surrounding points and interpolate
         for i in range (mid+1, mid +3):
-            infidelity = get_inf(i)
+            infidelity = get_inf_and_cost(i)
             good_inf.append([self.gate_count, float(infidelity)])
         for j in range (max(mid-2, 1), mid +1): #catching an edge case
-            infidelity = get_inf(j)
+            infidelity = get_inf_and_cost(j)
             bad_inf.append([self.gate_count, float(infidelity)])
         #Store the points to interpolate
         good_inf = np.array(good_inf)
@@ -620,10 +651,10 @@ def test():
     print("Difference norm:", np.linalg.norm(sum(hamiltonian) - sum(hamiltonian_copy)))
     compsim.print_partition()
     print("testing trotter")
-    print(find_optimal_cost(trottsim, .01, .1))
-    print(find_optimal_cost(compsim, 0.01, .1))
+    print(find_optimal_cost(trottsim, 100, .1))
+    print(find_optimal_cost(compsim, 100, .1))
     print("#" * 25)
     print("Now testing optimal chop")
-    partition_sim(compsim, "optimal_chop")
+    # partition_sim(compsim, "optimal_chop")
 
 test()
