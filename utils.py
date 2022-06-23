@@ -3,6 +3,7 @@ from asyncore import loop
 from mimetypes import init
 from operator import matmul
 from cirq import sample
+from more_itertools import partition
 import numpy as np
 import matplotlib.pyplot as plt
 import statistics
@@ -311,6 +312,9 @@ def partition_sim(simulator, partition_type = "prob", chop_threshold = 0.5, opti
 
     elif partition_type == "qdrift":
         partition_sim_qdrift(simulator)
+    
+    elif partition_type == "gbrt_prob":
+        partition_sim_gbrt_prob(simulator, time, epsilon)
     
     else:
         print("[partition_sim] Did not recieve valid partition. Valid options are: 'prob', 'optimize', 'random', 'chop', 'optimal_chop', 'trotter', and 'qdrift'.")
