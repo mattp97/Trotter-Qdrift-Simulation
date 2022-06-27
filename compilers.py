@@ -405,24 +405,18 @@ class QDriftSim:
 #                     in the list is numpy matrix (preferably sparse, no guarantee on data struct
 #                     actually used). Ex: H = A + B + C + D --> hamiltonian_list = [A, B, C, D]
 #                     ASSUME SQUARE MATRIX INPUTS
-# - time: Floating point (no size guarantees) representing time for TOTAL simulation, NOT per
-#         iteration. "t" parameter in the literature.
-# - samples: "big_N" parameter. This object controls the number of times we sample from the QDrift channel, and each
-#            exponetial is applied with time replaced by time*sum(spectral_norms)/big_N.
 # - rng_seed: Seed for the random number generator so results are reproducible.
-# - order: The Trotter-Suzuki product formula order for both the inner and outer loop of the algorithm
-# - partition: a string indicating how to divide the simulation into a composition of Trotter and QDrift steps. Has 2 options 
-#              for either probabilistic partitioning or an optimized cost partition.
-# - epsilon: The total error accumulated over the simulation           
+# - inner_order: The Trotter-Suzuki product formula order for the Trotter channel
+# - outter_order: The decomposition order / "outer-loop" order. Dictates which channels to simulate for how long
+# - nb: number of samples to use in the QDrift channel.
+# - state_rand: use random initial states if true, use computational |0> if false. 
 
 ###############################################################################################################################################################
 #Composite simulation but using a framework with lists of tuples instead of lists of matrices for improved runtime
 #This code adopts the convention that for lists of tuples, indices are stored in [0] and values in [1]
 class CompositeSim:
-    def __init__(self, hamiltonian_list = [], inner_order = 1, outer_order = 1, initial_time = 0.1, partition = "random", 
-    rng_seed = 1, nb_optimizer = False, weight_threshold = 0.5, nb = 1, epsilon = 0.001, state_rand = False):
-        self.hamiltonian_list = []
-        self.spectral_norms = []
+    def __init__(self, hamiltonian_list = [], inner_order = 1, outer_order = 1, 
+    rng_seed = 1, nb = 1, state_rand = False):
         self.trotter_operators = []
         self.trotter_norms = []
         self.qdrift_operators = []
@@ -432,20 +426,15 @@ class CompositeSim:
         self.rng_seed = rng_seed
         self.outer_order = outer_order 
         self.inner_order = inner_order
-        self.partition = partition
-        self.nb_optimizer = nb_optimizer
-        self.epsilon = epsilon #simulation error
-        self.weight_threshold = weight_threshold
+
         self.state_rand = state_rand
 
         self.qdrift_sim = QDriftSim()
         self.trotter_sim = TrotterSim(order = inner_order)
 
         self.nb = nb #number of Qdrift channel samples. Useful to define as an attribute if we are choosing whether or not to optimize over it. Only used in analytic cost optimization
-        self.time = initial_time 
-        self.gate_count = 0 #Used to keep track of the operators in analyse_sim
-        self.gate_data = [] #used to access the gate counts in the notebook
-        self.optimized_gatecost = 0 #Used to store the optimized gate cost in the partition methods that optimize the overall sim cost
+
+        self.gate_count = 0 
 
         #Choose to randomize the initial state or just use computational |0>
         #Should probably add functionality to take an initial state as input at some point
@@ -461,23 +450,10 @@ class CompositeSim:
 
         # NOTE: This sets the default behavior to be a fully Trotter channel!
         self.set_partition(hamiltonian_list, [])
-        self.prep_hamiltonian_lists(hamiltonian_list)
         np.random.seed(self.rng_seed)
 
         if nb_optimizer == True:
             print("Nb is equal to " + str(self.nb))
-
-    def prep_hamiltonian_lists(self, ham_list):
-        for h in ham_list:
-            temp_norm = np.linalg.norm(h, ord=2)
-            if temp_norm < FLOATING_POINT_PRECISION:
-                print("[prep_hamiltonian_lists] Spectral norm of a hamiltonian found to be 0")
-                self.spectral_norms = []
-                self.hamiltonian_list = []
-                return 1
-            self.spectral_norms.append(temp_norm)
-            self.hamiltonian_list.append(h / temp_norm)
-        return 0
 
     def get_hamiltonian_list(self):
         ret = []
@@ -488,7 +464,7 @@ class CompositeSim:
         return ret
     
     def get_lambda(self):
-        return sum(self.spectral_norms)
+        return sum(self.qdrift_norms) + sum(self.trotter_norms)
 
     def reset_init_state(self):
         self.initial_state = np.zeros((self.hilbert_dim, 1))
@@ -501,51 +477,9 @@ class CompositeSim:
         self.trotter_sim.set_initial_state(state)
         self.qdrift_sim.set_initial_state(state)
 
-
-    ################################################################
-    #OPTIMIZATION FUNCTIONS
-    ################################################################
-    #First order cost functions to optimize over
-    def nb_first_order_cost(self, weight): #first order cost, currently computes equation 31 from paper. Weight is a list of all weights with Nb in the last entry
-        cost = 0.0                         #Error with this function, it may not be possible to optimize Nb with this structure given the expression of the function
-        qd_sum = 0.0
-        for i in range(len(self.spectral_norms)):
-            qd_sum += (1-weight[i]) * self.spectral_norms[i]
-            for j in range(len(self.spectral_norms)):
-                commutator_norm = np.linalg.norm(np.matmul(self.hamiltonian_list[i], self.hamiltonian_list[j]) - np.matmul(self.hamiltonian_list[j], self.hamiltonian_list[i]), ord = 2)
-                cost += (2/(5**(1/2))) * ((weight[i] * weight[j] * self.spectral_norms[i] * self.spectral_norms[j] * commutator_norm) + 
-                    (weight[i] * (1-weight[j]) * self.spectral_norms[i] * self.spectral_norms[j] * commutator_norm))
-        cost += (qd_sum**2) * 4/weight[-1] #dividing by Nb at the end (this form is just being used so I can easily optimize Nb as well)
-        return cost
-
-    def first_order_cost(self, weight): #first order cost, currently computes equation 31 from paper. Function does not have nb as an omptimizable parameter
-        cost = 0.0
-        qd_sum = 0.0
-        for i in range(len(self.spectral_norms)):
-            qd_sum += (1-weight[i]) * self.spectral_norms[i]
-            for j in range(len(self.spectral_norms)):
-                commutator_norm = np.linalg.norm(np.matmul(self.hamiltonian_list[i], self.hamiltonian_list[j]) - np.matmul(self.hamiltonian_list[j], self.hamiltonian_list[i]), ord = 2)
-                cost += (2/(5**(1/2))) * ((weight[i] * weight[j] * self.spectral_norms[i] * self.spectral_norms[j] * commutator_norm) + 
-                    (weight[i] * (1-weight[j]) * self.spectral_norms[i] * self.spectral_norms[j] * commutator_norm))
-        cost += (qd_sum**2) * 4/self.nb #dividing by Nb at the end (this form is just being used so I can easily optimize Nb as well)
-        return cost
-
-    #Function that allows for the optimization of the nb parameter in the probabilistic partitioning scheme (at each timestep)
-    def prob_nb_optima(self, test_nb):
-        k = self.inner_order/2
-        upsilon = 2*(5**(k -1))
-        lamb = sum(self.spectral_norms)
-        test_chi = (lamb/len(self.spectral_norms)) * ((test_nb * (self.epsilon/(lamb * self.time))**(1-(1/(2*k))) * 
-        ((2*k + upsilon)/(2*k +1))**(1/(2*k)) * (upsilon**(1/(2*k)) / 2**(1-(1/k))))**(1/2) - 1) 
-            
-        test_probs = []
-        for i in range(len(self.spectral_norms)):
-            test_probs.append(float(np.abs((1/self.spectral_norms[i])*test_chi))) #ISSUE
-        return max(test_probs)
-
     # Inputs: trotter_list - a python list of numpy arrays, each element is a single term in a hamiltonian
     #         qdrift_list - same but these terms go into the qdrift simulator. 
-    # Note: each of these matrices is NOT normalized
+    # Note: each of these matrices should NOT be normalized, all normalization should be done internally
     def set_partition(self, trotter_list, qdrift_list):
         self.trotter_norms, self.trotter_operators = [], []
         self.qdrift_norms, self.qdrift_operators = [], []
@@ -560,8 +494,6 @@ class CompositeSim:
             self.qdrift_norms.append(temp_norm)
             self.qdrift_operators.append(matrix / temp_norm)
 
-        self.spectral_norms += self.trotter_norms + self.qdrift_norms
-        self.hamiltonian_list += self.trotter_operators + self.qdrift_operators
         if len(qdrift_list) > 0:
             self.qdrift_sim.set_hamiltonian(norm_list=self.qdrift_norms, mat_list=self.qdrift_operators)
         elif len(trotter_list) == 0:
@@ -576,25 +508,8 @@ class CompositeSim:
 
     def print_partition(self):
         print("[CompositeSim] # of Trotter terms:", len(self.trotter_norms), ", # of Qdrift terms: ", len(self.qdrift_norms), ", and Nb = ", self.nb)
-    ##########################################################################################
-    #Simulation Section -- contains functions to call in the workbook to simulate hamiltonians
-    ##########################################################################################
-    
-    #a function to decide on a good number of monte carlo samples for the following simulation functions (avoid noise errors)
-    def sample_decider(self, time, samples, iterations, mc_sample_guess):
-        exact_state = exact_time_evolution(self.unparsed_hamiltonian, time, self.initial_state)
-        sample_guess = mc_sample_guess
-        inf_samples = [1, 0]
-        for k in range(1, 25):
-            inf_samples[k%2] = self.sample_channel_inf(time, samples, iterations, sample_guess, exact_state)
-            print(inf_samples)
-            if np.abs((inf_samples[0] - inf_samples[1])) < (0.1 * self.epsilon): #choice of precision
-                break
-            else:
-                sample_guess *= 2
-        return int(sample_guess/2)
 
-    #Simulate and error scaling
+    # Simulate time evolution approximately. returns the final state and stores the number of gates executed as self.gate_count
     def simulate(self, time, iterations): 
         self.gate_count = 0
         outer_loop_timesteps = compute_trotter_timesteps(2, time / (1. * iterations), self.outer_order)
@@ -611,102 +526,6 @@ class CompositeSim:
                     current_state = self.qdrift_sim.simulate(sim_time, self.nb)
                     self.gate_count += self.qdrift_sim.gate_count
         return current_state
-            
-    # A function that uses Monte-Carlo sampling to approximate the infidelity. If evaluating a Trotter channel, mcsamples should be set to 1.
-    def sample_channel_inf(self, time, samples, iterations, mcsamples, exact_state): 
-        sample_fidelity = 0
-        for s in range(mcsamples):
-            sim_state = self.simulate(time, samples, iterations)
-            sample_fidelity += (np.abs(np.dot(exact_state.conj().T, sim_state).flat[0]))**2
-        infidelity = 1- (sample_fidelity / mcsamples) 
-        return infidelity #this is of type array for some reason?
-
-    # A function to analyse the cost of a simulation with a certain error tolerance. The function is expensive -- it searches for the point 
-    # (the number of iterations or samples) at which the error tolerance is met, and does so with an exponential then binary search,
-    # followed by a linear interpolation.
-    def sim_channel_performance(self, time, samples, iterations, mcsamples): #This function is not robust due to mc noise 
-        good_inf = []
-        bad_inf = []
-        exact_state = exact_time_evolution(self.unparsed_hamiltonian, time, self.initial_state)
-        if self.partition == "qdrift":
-            get_inf = lambda x: self.sample_channel_inf(time, samples = x, iterations = 1, mcsamples = mcsamples, exact_state = exact_state)
-            median_samples = 1
-            lower_bound = samples
-            upper_bound = samples
-        elif self.partition == "trotter":
-            get_inf = lambda x: self.sample_channel_inf(time, samples = 1, iterations = x, mcsamples = 1, exact_state = exact_state)
-            median_samples = 1
-            lower_bound = iterations
-            upper_bound = iterations
-        else:
-            get_inf = lambda x: self.sample_channel_inf(time, samples = samples, iterations = x, mcsamples = mcsamples, exact_state = exact_state)
-            median_samples = 1
-            lower_bound = iterations
-            upper_bound = iterations
-        
-        #Exponential search to set upper bound, then binary search in that interval
-        infidelity = get_inf(lower_bound)
-        if infidelity < self.epsilon:
-            print("[sim_channel_performance] Iterations too large, already below error threshold")
-            return self.gate_count
-        # Iterate up until some max cutoff
-        break_flag = False
-        upper_bound = upper_bound*2 #incase user input is 1
-        for n in range(10):
-            infidelity = get_inf(upper_bound) 
-            if infidelity < self.epsilon:
-                break_flag = True
-                break
-            else:
-                upper_bound *= (upper_bound)
-                print(infidelity, self.gate_count)
-        if break_flag == False :
-            raise Exception("[sim_channel_performance] maximum number of iterations hit, something is probably off")
-        print("the upper bound is " + str(upper_bound))
-
-        #catch an edge case
-        if upper_bound == 2:
-            return self.gate_count
-
-        #Binary search
-        break_flag_2 = False
-        while lower_bound < upper_bound:
-            mid = lower_bound+ (upper_bound - lower_bound)//2
-            if (mid == 2) or (mid ==1): 
-                break_flag_2 = True
-                break #catching another edge case
-            inf_plus = []
-            inf_minus = []
-            for n in range(median_samples):
-                inf_plus.append(get_inf(mid+2))
-                inf_minus.append(get_inf(mid-2))
-            med_inf_plus = statistics.median(inf_plus)
-            med_inf_minus = statistics.median(inf_minus)
-            print((med_inf_minus - self.epsilon, self.epsilon - med_inf_plus, upper_bound, lower_bound))
-            if (med_inf_plus < self.epsilon) and (med_inf_minus > self.epsilon): #Causing Problems
-                break_flag_2 = True
-                break #calling the critical point the point where the second point on either side goes from a bad point to a good point (we are in the neighbourhood of the ideal gate count)
-            elif med_inf_plus < self.epsilon:
-                upper_bound = mid - 1
-            else:
-                lower_bound = mid + 1
-        if break_flag_2 == False:
-            print("[sim_channel_performance] function did not find a good point")
-
-        #Compute some surrounding points and interpolate
-        for i in range (mid+1, mid +3):
-            infidelity = get_inf(i)
-            good_inf.append([self.gate_count, float(infidelity)])
-        for j in range (max(mid-2, 1), mid +1): #catching an edge case
-            infidelity = get_inf(j)
-            bad_inf.append([self.gate_count, float(infidelity)])
-        #Store the points to interpolate
-        good_inf = np.array(good_inf)
-        bad_inf = np.array(bad_inf)
-        self.gate_data = np.concatenate((bad_inf, good_inf), 0)
-        #print(self.gate_data)
-        fit = np.poly1d(np.polyfit(self.gate_data[:,1], self.gate_data[:,0], 1)) #linear best fit 
-        return fit(self.epsilon)
 
 
 ############################################################################################################

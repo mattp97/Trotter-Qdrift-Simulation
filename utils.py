@@ -468,6 +468,60 @@ def sample_probabilistic_partition(hamiltonian_list, prob_list):
             qdrift.append(hamiltonian_list[ix])
     return (trotter, qdrift)
 
+
+####  FIRST ORDER COST FUNCTIONS FROM SIMULATOR
+# These turn out to not modify the simulator directly/are necessary for simulator functioning so moved here. Currently not used so they are prunable.
+def nb_first_order_cost(simulator, weight): #first order cost, currently computes equation 31 from paper. Weight is a list of all weights with Nb in the last entry
+    cost = 0.0                         #Error with this function, it may not be possible to optimize Nb with this structure given the expression of the function
+    qd_sum = 0.0
+    for i in range(len(simulator.spectral_norms)):
+        qd_sum += (1-weight[i]) * simulator.spectral_norms[i]
+        for j in range(len(simulator.spectral_norms)):
+            commutator_norm = np.linalg.norm(np.matmul(simulator.hamiltonian_list[i], simulator.hamiltonian_list[j]) - np.matmul(simulator.hamiltonian_list[j], simulator.hamiltonian_list[i]), ord = 2)
+            cost += (2/(5**(1/2))) * ((weight[i] * weight[j] * simulator.spectral_norms[i] * simulator.spectral_norms[j] * commutator_norm) + 
+                (weight[i] * (1-weight[j]) * simulator.spectral_norms[i] * simulator.spectral_norms[j] * commutator_norm))
+    cost += (qd_sum**2) * 4/weight[-1] #dividing by Nb at the end (this form is just being used so I can easily optimize Nb as well)
+    return cost
+
+def first_order_cost(simulator, weight): #first order cost, currently computes equation 31 from paper. Function does not have nb as an omptimizable parameter
+    cost = 0.0
+    qd_sum = 0.0
+    for i in range(len(simulator.spectral_norms)):
+        qd_sum += (1-weight[i]) * simulator.spectral_norms[i]
+        for j in range(len(simulator.spectral_norms)):
+            commutator_norm = np.linalg.norm(np.matmul(simulator.hamiltonian_list[i], simulator.hamiltonian_list[j]) - np.matmul(simulator.hamiltonian_list[j], simulator.hamiltonian_list[i]), ord = 2)
+            cost += (2/(5**(1/2))) * ((weight[i] * weight[j] * simulator.spectral_norms[i] * simulator.spectral_norms[j] * commutator_norm) + 
+                (weight[i] * (1-weight[j]) * simulator.spectral_norms[i] * simulator.spectral_norms[j] * commutator_norm))
+    cost += (qd_sum**2) * 4/simulator.nb #dividing by Nb at the end (this form is just being used so I can easily optimize Nb as well)
+    return cost
+
+#Function that allows for the optimization of the nb parameter in the probabilistic partitioning scheme (at each timestep)
+def prob_nb_optima(simulator, test_nb):
+    k = simulator.inner_order/2
+    upsilon = 2*(5**(k -1))
+    lamb = sum(simulator.spectral_norms)
+    test_chi = (lamb/len(simulator.spectral_norms)) * ((test_nb * (simulator.epsilon/(lamb * simulator.time))**(1-(1/(2*k))) * 
+    ((2*k + upsilon)/(2*k +1))**(1/(2*k)) * (upsilon**(1/(2*k)) / 2**(1-(1/k))))**(1/2) - 1) 
+        
+    test_probs = []
+    for i in range(len(simulator.spectral_norms)):
+        test_probs.append(float(np.abs((1/simulator.spectral_norms[i])*test_chi))) #ISSUE
+    return max(test_probs)
+
+#a function to decide on a good number of monte carlo samples for the following simulation functions (avoid noise errors)
+def sample_decider(simulator, time, samples, iterations, mc_sample_guess, epsilon):
+    exact_state = exact_time_evolution(simulator.unparsed_hamiltonian, time, simulator.initial_state)
+    sample_guess = mc_sample_guess
+    inf_samples = [1, 0]
+    for k in range(1, 25):
+        inf_samples[k%2] = simulator.sample_channel_inf(time, samples, iterations, sample_guess, exact_state)
+        print(inf_samples)
+        if np.abs((inf_samples[0] - inf_samples[1])) < (0.1 * epsilon): #choice of precision
+            break
+        else:
+            sample_guess *= 2
+    return int(sample_guess/2)
+
 def test():
     hamiltonian = graph_hamiltonian(2, 1, 1)
     t = 0.01
