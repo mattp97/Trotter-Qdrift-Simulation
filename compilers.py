@@ -303,6 +303,7 @@ class TrotterSim:
         psi = np.copy(self.initial_state)
         for k in range(num_ops * iterations): 
             psi = self.exp_op_cache[k % num_ops] @ psi
+            self.final_state = psi
             self.gate_count += 1
         return psi
 
@@ -329,6 +330,7 @@ class TrotterSim:
         psi = np.copy(self.initial_state)
         for k in range(num_ops * iterations): 
             psi = self.exp_op_cache[k % num_ops] @ psi @ self.conj_cache[k % num_ops]
+            self.final_state = psi
             self.gate_count += 1
         return psi
 
@@ -407,7 +409,7 @@ class QDriftSim:
 
     # Assumes terms are already normalized
     def set_hamiltonian(self, mat_list = [], norm_list = []):
-        if len(mat_list) != len(mat_list):
+        if len(mat_list) != len(norm_list):
             print("[QD - set_hamiltonian] Incorrect length arrays")
             return 1
         self.hamiltonian_list = mat_list
@@ -483,29 +485,33 @@ class QDriftSim:
 
     def construct_density(self, time, samples):
         self.gate_count = 0
+        lamb = np.sum(self.spectral_norms)
+        tau = time * lamb / (samples * 1.0)
         if "time" in self.exp_op_cache:
-            if (self.exp_op_cache["time"] != time) or (self.exp_op_cache["samples"] >= samples):
+            if (self.exp_op_cache["time"] != time) or (self.exp_op_cache["samples"] != samples) or (len(self.conj_cache) != len(self.spectral_norms)): #incase partition changes
                 self.exp_op_cache.clear()
-                self.conj_cache.clear() #based on code will follow the conditions above 
+                self.conj_cache.clear() #based on code will follow the conditions above
 
         if (len(self.hamiltonian_list) == 0): # or (len(self.hamiltonian_list) == 1) caused issues in comp sim
             return np.copy(self.initial_state) #make the choice not to sample a lone qdrift term
+        
+        if self.exp_op_cache == {}:
+            self.exp_op_cache["time"] = time
+            self.exp_op_cache["samples"] = samples
+            for k in range(len(self.spectral_norms)):
+                self.exp_op_cache[k] = linalg.expm(1.j * tau * self.hamiltonian_list[k])
+                self.conj_cache[k] = self.exp_op_cache.get(k).conj().T
 
-        self.exp_op_cache["time"] = time
-        self.exp_op_cache["samples"] = samples
-        lamb = np.sum(self.spectral_norms)
-        tau = time * lamb / (samples * 1.0)
-        for k in range(len(self.spectral_norms)):
-            self.exp_op_cache[k] = linalg.expm(1.j * tau * self.hamiltonian_list[k])
-            self.conj_cache[k] = self.exp_op_cache.get(k).conj().T
         rho = np.copy(self.initial_state)
         for i in range(samples):
             channel_output = np.zeros((self.hamiltonian_list[0].shape[0], self.hamiltonian_list[0].shape[0]), dtype = 'complex')
             for j in range(len(self.spectral_norms)):
-                channel_output += (self.spectral_norms[j]/lamb) * self.exp_op_cache.get(j) @ rho @ self.conj_cache.get(j)
+                channel_output += (self.spectral_norms[j]/lamb) * self.exp_op_cache.get(j) @ rho @ self.conj_cache.get(j) #an error is creeping in here (I think for the case len(b) = 1)
             rho = channel_output
+
+        self.final_state = rho
         self.gate_count = samples
-        return rho
+        return np.copy(self.final_state)
 
     def sample_channel_inf(self, time, samples, mcsamples):
         sample_fidelity = []
@@ -681,8 +687,7 @@ class CompositeSim:
         if self.partition == "prob":
             if self.trotter_sim.order > 1: k = self.trotter_sim.order/2
             else: 
-                print("partition not defined for this order") 
-                return 1
+                raise Exception("partition not defined for this order")
             
             upsilon = 2*(5**(k -1))
             lamb = sum(self.spectral_norms)
@@ -1257,9 +1262,8 @@ class DensityMatrixSim:
         if self.partition == "prob":
             if self.trotter_sim.order > 1: k = self.trotter_sim.order/2
             else: 
-                print("partition not defined for this order") 
-                return 1
-            
+                raise Exception("partition not defined for this order") 
+                
             upsilon = 2*(5**(k -1))
             lamb = sum(self.spectral_norms)
 
@@ -1316,11 +1320,11 @@ class DensityMatrixSim:
             #so there is no need to run sim_channel_performance again, instead just call repartitioning for a given time
             #and the cost is stored in the attribute self.optimized_gatecost. This function relies on self.time which is handled
             #by repartition()
-            w_guess = sum(self.spectral_norms)/len(self.spectral_norms) #guess the average for the weights
-            nb_guess = (1/2) * len(self.spectral_norms)
+            w_guess = statistics.median(self.spectral_norms) #guess the median for the weights
+            nb_guess = int(len(self.spectral_norms))
             condition = self.nb_optimizer
             if condition == True:
-                dim1 = Integer(name='samples', low=1, high= len(self.spectral_norms) * 100)
+                dim1 = Integer(name='samples', low=1, high= len(self.spectral_norms) * 20)
                 dim2 = Real(name='weight_threshold', low=0, high = max(self.spectral_norms))
                 dimensions = [dim1, dim2]
             else:
@@ -1352,11 +1356,11 @@ class DensityMatrixSim:
                         break_flag = True
                         break
                     else:
-                        upper_bound *= 10
-                        print(trace_dist, self.gate_count)
+                        upper_bound *= 2
+                        #print(trace_dist, self.gate_count)
                 if break_flag == False :
                     raise Exception("[sim_channel_performance] maximum number of iterations hit, something is probably off")
-                print("the upper bound is " + str(upper_bound))
+                #print("the upper bound is " + str(upper_bound))
 
                 if upper_bound == 2:
                     return self.gate_count
@@ -1380,33 +1384,67 @@ class DensityMatrixSim:
                 get_trace_dist(mid)
                 return self.gate_count
 
-                #Compute some surrounding points and interpolate
-                #good_dist = []
-                #bad_dist = []
-                #for i in range (mid+1, mid +3):
-                #    trace_dist = get_trace_dist(i)
-                #    good_dist.append([self.gate_count, float(trace_dist)])
-                #for j in range (max(mid-2, 1), mid +1): #catching an edge case
-                #    trace_dist = get_trace_dist(j)
-                #    bad_dist.append([self.gate_count, float(trace_dist)])
-                ##Store the points to interpolate
-                #good_dist = np.array(good_dist)
-                #bad_dist = np.array(bad_dist)
-                #self.gate_data = np.concatenate((bad_dist, good_dist), 0)
-                #print(self.gate_data)
-                #fit = np.poly1d(np.polyfit(self.gate_data[:,1], self.gate_data[:,0], 1)) #linear best fit 
-                #return fit(self.epsilon)
+            @use_named_args(dimensions=dimensions)
+            def optimal_performance(weight_threshold):  
+                samples = self.nb
+                time = self.time
+                self.repartition(self.time, weight_threshold = weight_threshold) #time is being dealt with in a weird way
+
+                get_trace_dist = lambda x : self.sim_trace_distance(time, samples, iterations=x)
+                lower_bound = 1
+                upper_bound = 1
+
+                trace_dist = get_trace_dist(lower_bound)
+                if trace_dist < self.epsilon:
+                    print("[sim_channel_performance] Iterations too large, already below error threshold")
+                    return self.gate_count
+                # Iterate up until some max cutoff
+                break_flag = False
+                upper_bound = upper_bound*2 #incase user input is 1
+                for n in range(20):
+                    trace_dist = get_trace_dist(upper_bound) 
+                    if trace_dist < self.epsilon:
+                        break_flag = True
+                        break
+                    else:
+                        upper_bound *= 2
+                        #print(trace_dist, self.gate_count)
+                if break_flag == False :
+                    raise Exception("[sim_channel_performance] maximum number of iterations hit, something is probably off")
+                #print("the upper bound is " + str(upper_bound))
+
+                if upper_bound == 2:
+                    return self.gate_count
+
+                #Binary search
+                break_flag_2 = False
+                while lower_bound < upper_bound:
+                    mid = lower_bound + (upper_bound - lower_bound)//2
+                    if (mid == 2) or (mid ==1): 
+                        return self.gate_count #catching another edge case
+                    if (get_trace_dist(mid +1) < self.epsilon) and (get_trace_dist(mid-1) > self.epsilon): #Causing Problems
+                        break_flag_2 = True
+                        break #calling the critical point the point where the second point on either side goes from a bad point to a good point (we are in the neighbourhood of the ideal gate count)
+                    elif get_trace_dist(mid) < self.epsilon:
+                        upper_bound = mid - 1
+                    else:
+                        lower_bound = mid + 1
+                if break_flag_2 == False:
+                    print("[sim_channel_performance] function did not find a good point")
+
+                get_trace_dist(mid)
+                return self.gate_count
 
             if condition == True: #the case where we optimize nb
-                result = gbrt_minimize(func=nb_optimal_performance,dimensions=dimensions, n_calls=20, n_initial_points = 5, 
-                random_state=4, verbose = True, acq_func = "LCB")
+                result = gbrt_minimize(func=nb_optimal_performance,dimensions=dimensions, n_calls=20, n_initial_points = 3, 
+                random_state=4, verbose = False, acq_func = "LCB", x0 = [nb_guess, w_guess])
                 self.nb = result.x[0]
             else: 
-                result = gbrt_minimize(func=optimal_performance,dimensions=dimensions, n_calls=20, n_initial_points = 5, 
-                random_state=4, verbose = True, acq_func = "LCB")
+                result = gbrt_minimize(func=optimal_performance,dimensions=dimensions, n_calls=15, n_initial_points = 3, 
+                random_state=4, verbose = False, acq_func = "LCB", x0 = [w_guess])
                 
-            print(result.fun)
-            print(result.x)
+            #print(result.fun)
+            #print(result.x)
             self.optimized_gatecost = result.fun
             self.partition = "optimal chop" #reset for iterating
             return 0
@@ -1488,17 +1526,17 @@ class DensityMatrixSim:
             return self.gate_count
         # Iterate up until some max cutoff
         break_flag = False
-        for n in range(10):
+        for n in range(27):
             trace_dist = get_trace_dist(upper_bound) 
             if trace_dist < self.epsilon:
                 break_flag = True
                 break
             else:
-                upper_bound *= 10
-                print(trace_dist, self.gate_count)
-        if break_flag == False :
+                upper_bound *= 2
+                #print(trace_dist, self.gate_count)
+        if break_flag == False:
             raise Exception("[sim_channel_performance] maximum number of iterations hit, something is probably off")
-        print("the upper bound is " + str(upper_bound))
+        #print("the upper bound is " + str(upper_bound))
 
         if (upper_bound == 2):
             return self.gate_count
