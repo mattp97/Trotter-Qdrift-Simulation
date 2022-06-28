@@ -415,8 +415,7 @@ class QDriftSim:
 #Composite simulation but using a framework with lists of tuples instead of lists of matrices for improved runtime
 #This code adopts the convention that for lists of tuples, indices are stored in [0] and values in [1]
 class CompositeSim:
-    def __init__(self, hamiltonian_list = [], inner_order = 1, outer_order = 1, 
-    rng_seed = 1, nb = 1, state_rand = False):
+    def __init__(self, hamiltonian_list = [], inner_order = 1, outer_order = 1, rng_seed = 1, nb = 1, state_rand = False):
         self.trotter_operators = []
         self.trotter_norms = []
         self.qdrift_operators = []
@@ -452,8 +451,8 @@ class CompositeSim:
         self.set_partition(hamiltonian_list, [])
         np.random.seed(self.rng_seed)
 
-        if nb_optimizer == True:
-            print("Nb is equal to " + str(self.nb))
+        # if nb_optimizer == True:
+        #     print("Nb is equal to " + str(self.nb))
 
     def get_hamiltonian_list(self):
         ret = []
@@ -494,6 +493,7 @@ class CompositeSim:
             self.qdrift_norms.append(temp_norm)
             self.qdrift_operators.append(matrix / temp_norm)
 
+        # TODO check clear and then set
         if len(qdrift_list) > 0:
             self.qdrift_sim.set_hamiltonian(norm_list=self.qdrift_norms, mat_list=self.qdrift_operators)
         elif len(trotter_list) == 0:

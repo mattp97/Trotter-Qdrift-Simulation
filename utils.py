@@ -224,6 +224,8 @@ def find_optimal_cost(simulator, time, infidelity_threshold, heuristic = -1, mc_
         iter_upper = get_iteration_bound(get_inf, infidelity_threshold, 1, False)
         # NOTE: this lower bound should work because get_iteration_bound doubles until it finds an upper so half of this should be a lower.
         iter_lower = math.floor(iter_upper / 2) 
+
+
     # print("[find_optimal_cost] iter_lower, iter_upper:", iter_lower, ", ", iter_upper)
     # bisection search until we find it.
     mid = 1
@@ -414,7 +416,7 @@ def partition_sim_optimal_chop(simulator, time, epsilon):
     @use_named_args(dimensions=dimensions)
     def obj_fn(weight):
         partition_sim_chop(simulator, weight)
-        return find_optimal_cost(simulator, time, epsilon)[0]
+        return find_optimal_cost(simulator, time, epsilon)[0] # [0] gets the costs throws away iters
     result = gbrt_minimize(obj_fn, dimensions=dimensions, n_calls=30, n_initial_points=5, random_state=4, verbose=True, acq_func="LCB")
     print("result.fun: ", result.fun)
     print("result.x: ", result.x)
