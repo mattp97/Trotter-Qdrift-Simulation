@@ -393,14 +393,10 @@ class QDriftSim:
             for j in range(len(self.spectral_norms)):
                 channel_output += (self.spectral_norms[j]/lamb) * self.exp_op_cache.get(j) @ rho @ self.conj_cache.get(j) #an error is creeping in here (I think for the case len(b) = 1)
             rho = channel_output
-<<<<<<< HEAD
-        return rho
-=======
 
         self.final_state = rho
         self.gate_count = samples
         return np.copy(self.final_state)
->>>>>>> main
 
     def sample_channel_inf(self, time, samples, mcsamples):
         sample_fidelity = []
@@ -499,104 +495,10 @@ class CompositeSim:
         self.trotter_norms, self.trotter_operators = [], []
         self.qdrift_norms, self.qdrift_operators = [], []
         
-<<<<<<< HEAD
         for matrix in trotter_list:
             temp_norm = np.linalg.norm(matrix, ord = 2)
             self.trotter_norms.append(temp_norm)
             self.trotter_operators.append(matrix / temp_norm)
-=======
-        for ix in range(len(self.b_norms)):
-            index = int(self.b_norms[ix][0].real)
-            norm = self.b_norms[ix][1]
-            qdrift_terms.append(self.hamiltonian_list[index])
-            qdrift_norms.append(norm)
-        self.qdrift_sim.set_hamiltonian(qdrift_terms, qdrift_norms)
-        self.trotter_sim.set_hamiltonian(trott_terms, trott_norms)
-
-    ################################################################
-    #OPTIMIZATION FUNCTIONS
-    ################################################################
-    #First order cost functions to optimize over
-    def nb_first_order_cost(self, weight): #first order cost, currently computes equation 31 from paper. Weight is a list of all weights with Nb in the last entry
-        cost = 0.0                         #Error with this function, it may not be possible to optimize Nb with this structure given the expression of the function
-        qd_sum = 0.0
-        for i in range(len(self.spectral_norms)):
-            qd_sum += (1-weight[i]) * self.spectral_norms[i]
-            for j in range(len(self.spectral_norms)):
-                commutator_norm = np.linalg.norm(np.matmul(self.hamiltonian_list[i], self.hamiltonian_list[j]) - np.matmul(self.hamiltonian_list[j], self.hamiltonian_list[i]), ord = 2)
-                cost += (2/(5**(1/2))) * ((weight[i] * weight[j] * self.spectral_norms[i] * self.spectral_norms[j] * commutator_norm) + 
-                    (weight[i] * (1-weight[j]) * self.spectral_norms[i] * self.spectral_norms[j] * commutator_norm))
-        cost += (qd_sum**2) * 4/weight[-1] #dividing by Nb at the end (this form is just being used so I can easily optimize Nb as well)
-        return cost
-
-    def first_order_cost(self, weight): #first order cost, currently computes equation 31 from paper. Function does not have nb as an omptimizable parameter
-        cost = 0.0
-        qd_sum = 0.0
-        for i in range(len(self.spectral_norms)):
-            qd_sum += (1-weight[i]) * self.spectral_norms[i]
-            for j in range(len(self.spectral_norms)):
-                commutator_norm = np.linalg.norm(np.matmul(self.hamiltonian_list[i], self.hamiltonian_list[j]) - np.matmul(self.hamiltonian_list[j], self.hamiltonian_list[i]), ord = 2)
-                cost += (2/(5**(1/2))) * ((weight[i] * weight[j] * self.spectral_norms[i] * self.spectral_norms[j] * commutator_norm) + 
-                    (weight[i] * (1-weight[j]) * self.spectral_norms[i] * self.spectral_norms[j] * commutator_norm))
-        cost += (qd_sum**2) * 4/self.nb #dividing by Nb at the end (this form is just being used so I can easily optimize Nb as well)
-        return cost
-
-    #Function that allows for the optimization of the nb parameter in the probabilistic partitioning scheme (at each timestep)
-    def prob_nb_optima(self, test_nb):
-        k = self.inner_order/2
-        upsilon = 2*(5**(k -1))
-        lamb = sum(self.spectral_norms)
-        test_chi = (lamb/len(self.spectral_norms)) * ((test_nb * (self.epsilon/(lamb * self.time))**(1-(1/(2*k))) * 
-        ((2*k + upsilon)/(2*k +1))**(1/(2*k)) * (upsilon**(1/(2*k)) / 2**(1-(1/k))))**(1/2) - 1) 
-            
-        test_probs = []
-        for i in range(len(self.spectral_norms)):
-            test_probs.append(float(np.abs((1/self.spectral_norms[i])*test_chi))) #ISSUE
-        return max(test_probs)
-
-    ####################
-    #PARTITIONING METHOD to execute the partitioning method of the users choice, random likely not used in practice
-    ####################
-    def partitioning(self, weight_threshold):
-        #if ((self.partition == "trotter" or self.partition == "qdrift" or self.partition == "random" or self.partition == "optimize")): #This condition may change for the optimize scheme later
-            #print("This partitioning method does not require repartitioning") #Checks that our scheme is sane, prevents unnecessary time wasting
-            #return 1 maybe work this in again later?
-
-        if self.partition == "prob":
-            if self.trotter_sim.order > 1: k = self.trotter_sim.order/2
-            else: 
-                raise Exception("partition not defined for this order")
-            
-            upsilon = 2*(5**(k -1))
-            lamb = sum(self.spectral_norms)
-
-            if self.nb_optimizer == True:
-                optimal_nb = optimize.minimize(self.prob_nb_optima, self.nb, method='Nelder-Mead', bounds = optimize.Bounds([0], [np.inf], keep_feasible = False)) #Nb attribute serves as an inital geuss in this partition
-                nb_high = int(optimal_nb.x +1)
-                nb_low = int(optimal_nb.x)
-                prob_high = self.prob_nb_optima(nb_high) #check higher, (nb must be int)
-                prob_low = self.prob_nb_optima(nb_low) #check lower 
-                if prob_high > prob_low:
-                    self.nb = nb_low
-                else:
-                    self.nb = nb_high
-            else:
-                self.nb = int(((lamb * self.time/(self.epsilon))**(1-(1/(2*k))) * ((2*k +1)/(2*k + upsilon))**(1/(2*k)) * (2**(1-(1/k))/ upsilon**(1/(2*k)))) +1)
-            
-            print("Nb is " + str(self.nb))
-            
-            chi = (lamb/len(self.spectral_norms)) * ((self.nb * (self.epsilon/(lamb * self.time))**(1-(1/(2*k))) * 
-            ((2*k + upsilon)/(2*k +1))**(1/(2*k)) * (upsilon**(1/(2*k)) / 2**(1-(1/k))))**(1/2) - 1) 
-            
-            for i in range(len(self.spectral_norms)):
-                num = np.random.random()
-                prob=(1- min((1/self.spectral_norms[i])*chi, 1))
-                if prob >= num:
-                    self.a_norms.append(([i, self.spectral_norms[i]]))
-                else:
-                    self.b_norms.append(([i, self.spectral_norms[i]]))
-            return 0
->>>>>>> main
         
         for matrix in qdrift_list:
             temp_norm = np.linalg.norm(matrix, ord = 2)
