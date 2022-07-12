@@ -33,7 +33,7 @@ def profile(fnc):
         sortby = 'cumulative'
         ps = pstats.Stats(pr, stream=s).sort_stats(sortby)
         ps.print_stats()
-        print(s.getvalue())
+        print(s.getvalue()) 
         return retval
     return inner
 
@@ -104,6 +104,7 @@ class TrotterSim:
         self.order = order
         self.gate_count = 0
         self.exp_op_cache = dict()
+        self.conj_cache = dict()
 
         # Use the first computational basis state as the initial state until the user specifies.
         if len(hamiltonian_list) == 0:
@@ -181,6 +182,7 @@ class TrotterSim:
         psi = np.copy(self.initial_state)
         for k in range(num_ops * iterations): 
             psi = self.exp_op_cache[k % num_ops] @ psi
+            self.final_state = psi
             self.gate_count += 1
         return psi
 
@@ -201,11 +203,13 @@ class TrotterSim:
             key = 0
             for (ix, timestep) in steps:
                 self.exp_op_cache[key] = linalg.expm(1j * self.hamiltonian_list[ix] * self.spectral_norms[ix] * timestep)
+                self.conj_cache[key] = self.exp_op_cache.get(key).conj().T
                 key +=1
         num_ops = len(self.exp_op_cache) - 2 #2 of the keys are for time and iters
         psi = np.copy(self.initial_state)
         for k in range(num_ops * iterations): 
-            psi = self.exp_op_cache[k % num_ops] @ psi @ self.exp_op_cache[k % num_ops].conj().T
+            psi = self.exp_op_cache[k % num_ops] @ psi @ self.conj_cache[k % num_ops]
+            self.final_state = psi
             self.gate_count += 1
         return psi
 
@@ -239,13 +243,14 @@ class QDriftSim:
         self.rng_seed = rng_seed
         self.gate_count = 0
         self.exp_op_cache = dict()
+        self.conj_cache = dict()
 
         # Use the first computational basis state as the initial state until the user specifies.
         self.prep_hamiltonian_lists(hamiltonian_list)
         if len(hamiltonian_list) == 0:
             self.initial_state = np.zeros((1,1))
         else:
-            self.initial_state = np.zeros((self.hamiltonian_list[0].shape[0]))
+            self.initial_state = np.zeros((hamiltonian_list[0].shape[0]))
         self.initial_state[0] = 1
         self.final_state = np.copy(self.initial_state)
 
@@ -365,26 +370,37 @@ class QDriftSim:
 
     def construct_density(self, time, samples):
         self.gate_count = 0
+        lamb = np.sum(self.spectral_norms)
+        tau = time * lamb / (samples * 1.0)
         if "time" in self.exp_op_cache:
-            if (self.exp_op_cache["time"] != time) or (self.exp_op_cache["samples"] != samples):
+            if (self.exp_op_cache["time"] != time) or (self.exp_op_cache["samples"] != samples) or (len(self.conj_cache) != len(self.spectral_norms)): #incase partition changes
                 self.exp_op_cache.clear()
+                self.conj_cache.clear() #based on code will follow the conditions above
 
         if (len(self.hamiltonian_list) == 0): # or (len(self.hamiltonian_list) == 1) caused issues in comp sim
             return np.copy(self.initial_state) #make the choice not to sample a lone qdrift term
+        
+        if self.exp_op_cache == {}:
+            self.exp_op_cache["time"] = time
+            self.exp_op_cache["samples"] = samples
+            for k in range(len(self.spectral_norms)):
+                self.exp_op_cache[k] = linalg.expm(1.j * tau * self.hamiltonian_list[k])
+                self.conj_cache[k] = self.exp_op_cache.get(k).conj().T
 
-        self.exp_op_cache["time"] = time
-        self.exp_op_cache["samples"] = samples
-        lamb = np.sum(self.spectral_norms)
-        tau = time * lamb / (samples * 1.0)
-        for k in range(len(self.spectral_norms)):
-            self.exp_op_cache[k] = linalg.expm(1.j * tau * self.hamiltonian_list[k])
         rho = np.copy(self.initial_state)
         for i in range(samples):
             channel_output = np.zeros((self.hamiltonian_list[0].shape[0], self.hamiltonian_list[0].shape[0]), dtype = 'complex')
             for j in range(len(self.spectral_norms)):
-                channel_output += (self.spectral_norms[j]/lamb) * self.exp_op_cache.get(j) @ rho @ self.exp_op_cache.get(j).conj().T
+                channel_output += (self.spectral_norms[j]/lamb) * self.exp_op_cache.get(j) @ rho @ self.conj_cache.get(j) #an error is creeping in here (I think for the case len(b) = 1)
             rho = channel_output
+<<<<<<< HEAD
         return rho
+=======
+
+        self.final_state = rho
+        self.gate_count = samples
+        return np.copy(self.final_state)
+>>>>>>> main
 
     def sample_channel_inf(self, time, samples, mcsamples):
         sample_fidelity = []
@@ -483,10 +499,104 @@ class CompositeSim:
         self.trotter_norms, self.trotter_operators = [], []
         self.qdrift_norms, self.qdrift_operators = [], []
         
+<<<<<<< HEAD
         for matrix in trotter_list:
             temp_norm = np.linalg.norm(matrix, ord = 2)
             self.trotter_norms.append(temp_norm)
             self.trotter_operators.append(matrix / temp_norm)
+=======
+        for ix in range(len(self.b_norms)):
+            index = int(self.b_norms[ix][0].real)
+            norm = self.b_norms[ix][1]
+            qdrift_terms.append(self.hamiltonian_list[index])
+            qdrift_norms.append(norm)
+        self.qdrift_sim.set_hamiltonian(qdrift_terms, qdrift_norms)
+        self.trotter_sim.set_hamiltonian(trott_terms, trott_norms)
+
+    ################################################################
+    #OPTIMIZATION FUNCTIONS
+    ################################################################
+    #First order cost functions to optimize over
+    def nb_first_order_cost(self, weight): #first order cost, currently computes equation 31 from paper. Weight is a list of all weights with Nb in the last entry
+        cost = 0.0                         #Error with this function, it may not be possible to optimize Nb with this structure given the expression of the function
+        qd_sum = 0.0
+        for i in range(len(self.spectral_norms)):
+            qd_sum += (1-weight[i]) * self.spectral_norms[i]
+            for j in range(len(self.spectral_norms)):
+                commutator_norm = np.linalg.norm(np.matmul(self.hamiltonian_list[i], self.hamiltonian_list[j]) - np.matmul(self.hamiltonian_list[j], self.hamiltonian_list[i]), ord = 2)
+                cost += (2/(5**(1/2))) * ((weight[i] * weight[j] * self.spectral_norms[i] * self.spectral_norms[j] * commutator_norm) + 
+                    (weight[i] * (1-weight[j]) * self.spectral_norms[i] * self.spectral_norms[j] * commutator_norm))
+        cost += (qd_sum**2) * 4/weight[-1] #dividing by Nb at the end (this form is just being used so I can easily optimize Nb as well)
+        return cost
+
+    def first_order_cost(self, weight): #first order cost, currently computes equation 31 from paper. Function does not have nb as an omptimizable parameter
+        cost = 0.0
+        qd_sum = 0.0
+        for i in range(len(self.spectral_norms)):
+            qd_sum += (1-weight[i]) * self.spectral_norms[i]
+            for j in range(len(self.spectral_norms)):
+                commutator_norm = np.linalg.norm(np.matmul(self.hamiltonian_list[i], self.hamiltonian_list[j]) - np.matmul(self.hamiltonian_list[j], self.hamiltonian_list[i]), ord = 2)
+                cost += (2/(5**(1/2))) * ((weight[i] * weight[j] * self.spectral_norms[i] * self.spectral_norms[j] * commutator_norm) + 
+                    (weight[i] * (1-weight[j]) * self.spectral_norms[i] * self.spectral_norms[j] * commutator_norm))
+        cost += (qd_sum**2) * 4/self.nb #dividing by Nb at the end (this form is just being used so I can easily optimize Nb as well)
+        return cost
+
+    #Function that allows for the optimization of the nb parameter in the probabilistic partitioning scheme (at each timestep)
+    def prob_nb_optima(self, test_nb):
+        k = self.inner_order/2
+        upsilon = 2*(5**(k -1))
+        lamb = sum(self.spectral_norms)
+        test_chi = (lamb/len(self.spectral_norms)) * ((test_nb * (self.epsilon/(lamb * self.time))**(1-(1/(2*k))) * 
+        ((2*k + upsilon)/(2*k +1))**(1/(2*k)) * (upsilon**(1/(2*k)) / 2**(1-(1/k))))**(1/2) - 1) 
+            
+        test_probs = []
+        for i in range(len(self.spectral_norms)):
+            test_probs.append(float(np.abs((1/self.spectral_norms[i])*test_chi))) #ISSUE
+        return max(test_probs)
+
+    ####################
+    #PARTITIONING METHOD to execute the partitioning method of the users choice, random likely not used in practice
+    ####################
+    def partitioning(self, weight_threshold):
+        #if ((self.partition == "trotter" or self.partition == "qdrift" or self.partition == "random" or self.partition == "optimize")): #This condition may change for the optimize scheme later
+            #print("This partitioning method does not require repartitioning") #Checks that our scheme is sane, prevents unnecessary time wasting
+            #return 1 maybe work this in again later?
+
+        if self.partition == "prob":
+            if self.trotter_sim.order > 1: k = self.trotter_sim.order/2
+            else: 
+                raise Exception("partition not defined for this order")
+            
+            upsilon = 2*(5**(k -1))
+            lamb = sum(self.spectral_norms)
+
+            if self.nb_optimizer == True:
+                optimal_nb = optimize.minimize(self.prob_nb_optima, self.nb, method='Nelder-Mead', bounds = optimize.Bounds([0], [np.inf], keep_feasible = False)) #Nb attribute serves as an inital geuss in this partition
+                nb_high = int(optimal_nb.x +1)
+                nb_low = int(optimal_nb.x)
+                prob_high = self.prob_nb_optima(nb_high) #check higher, (nb must be int)
+                prob_low = self.prob_nb_optima(nb_low) #check lower 
+                if prob_high > prob_low:
+                    self.nb = nb_low
+                else:
+                    self.nb = nb_high
+            else:
+                self.nb = int(((lamb * self.time/(self.epsilon))**(1-(1/(2*k))) * ((2*k +1)/(2*k + upsilon))**(1/(2*k)) * (2**(1-(1/k))/ upsilon**(1/(2*k)))) +1)
+            
+            print("Nb is " + str(self.nb))
+            
+            chi = (lamb/len(self.spectral_norms)) * ((self.nb * (self.epsilon/(lamb * self.time))**(1-(1/(2*k))) * 
+            ((2*k + upsilon)/(2*k +1))**(1/(2*k)) * (upsilon**(1/(2*k)) / 2**(1-(1/k))))**(1/2) - 1) 
+            
+            for i in range(len(self.spectral_norms)):
+                num = np.random.random()
+                prob=(1- min((1/self.spectral_norms[i])*chi, 1))
+                if prob >= num:
+                    self.a_norms.append(([i, self.spectral_norms[i]]))
+                else:
+                    self.b_norms.append(([i, self.spectral_norms[i]]))
+            return 0
+>>>>>>> main
         
         for matrix in qdrift_list:
             temp_norm = np.linalg.norm(matrix, ord = 2)
@@ -528,8 +638,9 @@ class CompositeSim:
         return current_state
 
 
-############################################################################################################
+######################################################################################################
 #To perform the same as above, but with the density matrix formalisim to avoid the use of infidelity
+######################################################################################################
 class DensityMatrixSim:
     def __init__(self, hamiltonian_list = [], inner_order = 1, outer_order = 1, initial_time = 0.1, partition = "random", 
     rng_seed = 1, nb_optimizer = False, weight_threshold = 0.5, nb = 1, epsilon = 0.001, state_rand = False, pure = True):
@@ -626,11 +737,26 @@ class DensityMatrixSim:
 
 
     def reset_init_state(self):
-        self.initial_state = np.zeros((self.hilbert_dim, 2))
+        self.initial_state = np.zeros((self.hilbert_dim, self.hilbert_dim))
         self.initial_state[0] = 1.
         self.trotter_sim.reset_init_state()
         self.qdrift_sim.reset_init_state()
 
+#Optimizations functions
+    #Function that allows for the optimization of the nb parameter in the probabilistic partitioning scheme (at each timestep)
+    def prob_nb_optima(self, test_nb):
+        k = self.inner_order/2
+        upsilon = 2*(5**(k -1))
+        lamb = sum(self.spectral_norms)
+        test_chi = (lamb/len(self.spectral_norms)) * ((test_nb * (self.epsilon/(lamb * self.time))**(1-(1/(2*k))) * 
+        ((2*k + upsilon)/(2*k +1))**(1/(2*k)) * (upsilon**(1/(2*k)) / 2**(1-(1/k))))**(1/2) - 1) 
+            
+        test_probs = []
+        for i in range(len(self.spectral_norms)):
+            test_probs.append(float(np.abs((1/self.spectral_norms[i])*test_chi))) #ISSUE
+        return max(test_probs)
+
+#Partitioning       
     def partitioning(self, weight_threshold):
         #if ((self.partition == "trotter" or self.partition == "qdrift" or self.partition == "random" or self.partition == "optimize")): #This condition may change for the optimize scheme later
             #print("This partitioning method does not require repartitioning") #Checks that our scheme is sane, prevents unnecessary time wasting
@@ -639,9 +765,8 @@ class DensityMatrixSim:
         if self.partition == "prob":
             if self.trotter_sim.order > 1: k = self.trotter_sim.order/2
             else: 
-                print("partition not defined for this order") 
-                return 1
-            
+                raise Exception("partition not defined for this order") 
+                
             upsilon = 2*(5**(k -1))
             lamb = sum(self.spectral_norms)
 
@@ -693,6 +818,140 @@ class DensityMatrixSim:
             self.b_norms = np.array(self.b_norms, dtype='complex')
             return 0
 
+        elif self.partition == "optimal chop": 
+            #This partition method is to be used differently than the others in the notebook. It optimizes the gate cost, 
+            #so there is no need to run sim_channel_performance again, instead just call repartitioning for a given time
+            #and the cost is stored in the attribute self.optimized_gatecost. This function relies on self.time which is handled
+            #by repartition()
+            w_guess = statistics.median(self.spectral_norms) #guess the median for the weights
+            nb_guess = int(len(self.spectral_norms))
+            condition = self.nb_optimizer
+            if condition == True:
+                dim1 = Integer(name='samples', low=1, high= len(self.spectral_norms) * 20)
+                dim2 = Real(name='weight_threshold', low=0, high = max(self.spectral_norms))
+                dimensions = [dim1, dim2]
+            else:
+                dim2 = Real(name='weight_threshold', low=0, high=max(self.spectral_norms))
+                dimensions = [dim2]
+            self.partition = "chop" #A trick to optimize the chop partition method when the function below calls self.partitioning
+
+            #A function similar to that of sim_channel_performance, however, this one is defined only to be optimized not executed
+            @use_named_args(dimensions=dimensions)
+            def nb_optimal_performance(samples, weight_threshold):  
+                self.nb = samples
+                time = self.time
+                self.repartition(self.time, weight_threshold = weight_threshold) #time is being dealt with in a weird way
+
+                get_trace_dist = lambda x : self.sim_trace_distance(time, samples, iterations=x)
+                lower_bound = 1
+                upper_bound = 1
+
+                trace_dist = get_trace_dist(lower_bound)
+                if trace_dist < self.epsilon:
+                    print("[sim_channel_performance] Iterations too large, already below error threshold")
+                    return self.gate_count
+                # Iterate up until some max cutoff
+                break_flag = False
+                upper_bound = upper_bound*2 #incase user input is 1
+                for n in range(20):
+                    trace_dist = get_trace_dist(upper_bound) 
+                    if trace_dist < self.epsilon:
+                        break_flag = True
+                        break
+                    else:
+                        upper_bound *= 2
+                        #print(trace_dist, self.gate_count)
+                if break_flag == False :
+                    raise Exception("[sim_channel_performance] maximum number of iterations hit, something is probably off")
+                #print("the upper bound is " + str(upper_bound))
+
+                if upper_bound == 2:
+                    return self.gate_count
+
+                #Binary search
+                break_flag_2 = False
+                while lower_bound < upper_bound:
+                    mid = lower_bound + (upper_bound - lower_bound)//2
+                    if (mid == 2) or (mid ==1): 
+                        return self.gate_count #catching another edge case
+                    if (get_trace_dist(mid +1) < self.epsilon) and (get_trace_dist(mid-1) > self.epsilon): #Causing Problems
+                        break_flag_2 = True
+                        break #calling the critical point the point where the second point on either side goes from a bad point to a good point (we are in the neighbourhood of the ideal gate count)
+                    elif get_trace_dist(mid) < self.epsilon:
+                        upper_bound = mid - 1
+                    else:
+                        lower_bound = mid + 1
+                if break_flag_2 == False:
+                    print("[sim_channel_performance] function did not find a good point")
+
+                get_trace_dist(mid)
+                return self.gate_count
+
+            @use_named_args(dimensions=dimensions)
+            def optimal_performance(weight_threshold):  
+                samples = self.nb
+                time = self.time
+                self.repartition(self.time, weight_threshold = weight_threshold) #time is being dealt with in a weird way
+
+                get_trace_dist = lambda x : self.sim_trace_distance(time, samples, iterations=x)
+                lower_bound = 1
+                upper_bound = 1
+
+                trace_dist = get_trace_dist(lower_bound)
+                if trace_dist < self.epsilon:
+                    print("[sim_channel_performance] Iterations too large, already below error threshold")
+                    return self.gate_count
+                # Iterate up until some max cutoff
+                break_flag = False
+                upper_bound = upper_bound*2 #incase user input is 1
+                for n in range(20):
+                    trace_dist = get_trace_dist(upper_bound) 
+                    if trace_dist < self.epsilon:
+                        break_flag = True
+                        break
+                    else:
+                        upper_bound *= 2
+                        #print(trace_dist, self.gate_count)
+                if break_flag == False :
+                    raise Exception("[sim_channel_performance] maximum number of iterations hit, something is probably off")
+                #print("the upper bound is " + str(upper_bound))
+
+                if upper_bound == 2:
+                    return self.gate_count
+
+                #Binary search
+                break_flag_2 = False
+                while lower_bound < upper_bound:
+                    mid = lower_bound + (upper_bound - lower_bound)//2
+                    if (mid == 2) or (mid ==1): 
+                        return self.gate_count #catching another edge case
+                    if (get_trace_dist(mid +1) < self.epsilon) and (get_trace_dist(mid-1) > self.epsilon): #Causing Problems
+                        break_flag_2 = True
+                        break #calling the critical point the point where the second point on either side goes from a bad point to a good point (we are in the neighbourhood of the ideal gate count)
+                    elif get_trace_dist(mid) < self.epsilon:
+                        upper_bound = mid - 1
+                    else:
+                        lower_bound = mid + 1
+                if break_flag_2 == False:
+                    print("[sim_channel_performance] function did not find a good point")
+
+                get_trace_dist(mid)
+                return self.gate_count
+
+            if condition == True: #the case where we optimize nb
+                result = gbrt_minimize(func=nb_optimal_performance,dimensions=dimensions, n_calls=20, n_initial_points = 3, 
+                random_state=4, verbose = False, acq_func = "LCB", x0 = [nb_guess, w_guess])
+                self.nb = result.x[0]
+            else: 
+                result = gbrt_minimize(func=optimal_performance,dimensions=dimensions, n_calls=15, n_initial_points = 3, 
+                random_state=4, verbose = False, acq_func = "LCB", x0 = [w_guess])
+                
+            #print(result.fun)
+            #print(result.x)
+            self.optimized_gatecost = result.fun
+            self.partition = "optimal chop" #reset for iterating
+            return 0
+
         elif self.partition == "trotter":
             for i in range(len(self.spectral_norms)):
                 self.a_norms.append([i, self.spectral_norms[i]])
@@ -713,14 +972,14 @@ class DensityMatrixSim:
             print("Invalid input for attribute 'partition' ")
             return 1
 
-
+#Simulate and error analysis
     def simulate(self, time, samples, iterations): 
         if (self.nb_optimizer == False) and (self.partition != 'prob'): 
             self.nb = samples  #specifying the number of samples having optimized Nb does nothing
         if len(self.b_norms) == 1: self.nb = 1 #edge case, dont sameple the same gate over and over again
         self.gate_count = 0
         outer_loop_timesteps = compute_trotter_timesteps(2, time / (1. * iterations), self.outer_order)
-        #self.reset_init_state()
+        #self.reset_init_state() #causes problems in the case where we output the outer product (pure state case)
         if self.pure == True:
             current_state = np.copy(self.initial_state)
             for i in range(iterations):
@@ -753,3 +1012,69 @@ class DensityMatrixSim:
         exact_density_op = exact_time_evolution_density(self.unparsed_hamiltonian, time, self.initial_rho)
         trace_dist = trace_distance(sim_density_op, exact_density_op)
         return trace_dist
+
+    def sim_channel_performance(self, time):  
+        if self.partition == "qdrift":
+            get_trace_dist = lambda x : self.sim_trace_distance(time, samples = x, iterations=1)
+        elif self.partition == 'trotter':
+            get_trace_dist = lambda x : self.sim_trace_distance(time, samples = 1, iterations=x)
+        else: 
+            get_trace_dist = lambda x : self.sim_trace_distance(time, samples = self.nb, iterations=x)
+        
+        lower_bound = 1
+        upper_bound = 2
+        trace_dist = get_trace_dist(lower_bound)
+        if trace_dist < self.epsilon:
+            print("[sim_channel_performance] Iterations too large, already below error threshold")
+            return self.gate_count
+        # Iterate up until some max cutoff
+        break_flag = False
+        for n in range(27):
+            trace_dist = get_trace_dist(upper_bound) 
+            if trace_dist < self.epsilon:
+                break_flag = True
+                break
+            else:
+                upper_bound *= 2
+                #print(trace_dist, self.gate_count)
+        if break_flag == False:
+            raise Exception("[sim_channel_performance] maximum number of iterations hit, something is probably off")
+        #print("the upper bound is " + str(upper_bound))
+
+        if (upper_bound == 2):
+            return self.gate_count
+        #Binary search
+        break_flag_2 = False
+        while lower_bound < upper_bound:
+            mid = lower_bound + (upper_bound - lower_bound)//2
+            if (mid == 2) or (mid ==1): 
+                return self.gate_count #catching another edge case
+            if (get_trace_dist(mid +1) < self.epsilon) and (get_trace_dist(mid-1) > self.epsilon): #Causing Problems
+                break_flag_2 = True
+                break #calling the critical point the point where the second point on either side goes from a bad point to a good point (we are in the neighbourhood of the ideal gate count)
+            elif get_trace_dist(mid) < self.epsilon:
+                upper_bound = mid - 1
+            else:
+                lower_bound = mid + 1
+        if break_flag_2 == False:
+            print("[sim_channel_performance] function did not find a good point")
+
+        get_trace_dist(mid)
+        return self.gate_count
+
+        #Compute some surrounding points and interpolate
+        #good_dist = []
+        #bad_dist = []
+        #for i in range (mid+1, mid +3):
+        #    trace_dist = get_trace_dist(i)
+        #    good_dist.append([self.gate_count, float(trace_dist)])
+        #for j in range (max(mid-2, 1), mid +1): #catching an edge case
+        #    trace_dist = get_trace_dist(j)
+        #    bad_dist.append([self.gate_count, float(trace_dist)])
+        #Store the points to interpolate
+        #good_dist = np.array(good_dist)
+        #bad_dist = np.array(bad_dist)
+        #self.gate_data = np.concatenate((bad_dist, good_dist), 0)
+        #print(self.gate_data)
+        #fit = np.poly1d(np.polyfit(self.gate_data[:,1], self.gate_data[:,0], 1)) #linear best fit 
+        #return fit(self.epsilon)
