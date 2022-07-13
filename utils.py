@@ -126,7 +126,7 @@ def single_infidelity_sample(simulator, time, iterations = 1, nbsamples = 1):
     infidelity = 1 - (np.abs(np.dot(exact_output.conj().T, sim_output)).flat[0])**2
     return (infidelity, simulator.gate_count)
 
-def mutli_infidelity_sample(simulator, time, iterations=1, nbsamples=1, mc_samples=MC_SAMPLES_DEFAULT):
+def multi_infidelity_sample(simulator, time, iterations=1, nbsamples=1, mc_samples=MC_SAMPLES_DEFAULT):
     ret = []
 
     # No need to sample TrotterSim, just return single element list
@@ -199,9 +199,9 @@ def find_optimal_cost(simulator, time, infidelity_threshold, heuristic = -1, mc_
 
     # now we can simplify infidelity to nice lambda, NOTE get_inf_and_cost returns a TUPLE 
     if type(simulator) == TrotterSim or type(simulator) == CompositeSim:
-        get_inf_and_cost = lambda x: mutli_infidelity_sample(simulator, time, exact_final_state, iterations = x, mc_samples=mc_samples)
+        get_inf_and_cost = lambda x: multi_infidelity_sample(simulator, time, iterations = x, mc_samples=mc_samples)
     elif type(simulator) == QDriftSim:
-        get_inf_and_cost = lambda x: mutli_infidelity_sample(simulator, time, exact_final_state, nbsamples= x, mc_samples=mc_samples)
+        get_inf_and_cost = lambda x: multi_infidelity_sample(simulator, time, nbsamples= x, mc_samples=mc_samples)
     
     def get_inf(x):
         inf_tup, _ = zip(*get_inf_and_cost(x))
@@ -252,7 +252,7 @@ def find_optimal_cost(simulator, time, infidelity_threshold, heuristic = -1, mc_
         print("[find_optimal_cost] Reached loop depth, results may be inaccurate")
     ret = get_inf_and_cost(iter_upper)
     inf_tup, costs = zip(*ret)
-    print("[find_optimal_cost] computed infidelity avg:", np.mean(list(inf_tup)))
+    # print("[find_optimal_cost] computed infidelity avg:", np.mean(list(inf_tup)))
     return (np.mean(costs), iter_upper)
 
 # Computes the expected cost of a probabilistic partitioning scheme. 
