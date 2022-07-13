@@ -9,7 +9,7 @@ from scipy import linalg
 from scipy import optimize
 from scipy import interpolate
 import math
-from numpy import mat, random
+from numpy import inner, mat, random
 import cmath
 import time as time_this
 from sqlalchemy import false
@@ -128,6 +128,9 @@ class TrotterSim:
             self.spectral_norms.append(temp_norm)
             self.hamiltonian_list.append(h / temp_norm)
         return 0
+    
+    def set_trotter_order(self, order):
+        self.order = order
 
     # Assumes terms are already normalized
     def set_hamiltonian(self, mat_list = [], norm_list = []):
@@ -427,7 +430,15 @@ class QDriftSim:
 #Composite simulation but using a framework with lists of tuples instead of lists of matrices for improved runtime
 #This code adopts the convention that for lists of tuples, indices are stored in [0] and values in [1]
 class CompositeSim:
-    def __init__(self, hamiltonian_list = [], inner_order = 1, outer_order = 1, rng_seed = 1, nb = 1, state_rand = False):
+    def __init__(
+                self,
+                hamiltonian_list = [],
+                inner_order = 1,
+                outer_order = 1,
+                rng_seed = 1,
+                nb = 1,
+                state_rand = False
+                ):
         self.trotter_operators = []
         self.trotter_norms = []
         self.qdrift_operators = []
@@ -482,6 +493,17 @@ class CompositeSim:
         self.initial_state[0] = 1.
         self.trotter_sim.reset_init_state()
         self.qdrift_sim.reset_init_state()
+
+    def randomize_initial_state(self):
+        rng_ix = np.random.randint(0, self.hilbert_dim)
+        init = np.copy(self.initial_state) * 0
+        init[rng_ix] = 1.
+        self.set_initial_state(init)
+    
+    def set_trotter_order(self, inner_order, outer_order=1):
+        self.inner_order = inner_order
+        self.trotter_sim.set_trotter_order(inner_order)
+        self.outer_order = outer_order
 
     def set_initial_state(self, state):
         self.initial_state = state
@@ -538,6 +560,14 @@ class CompositeSim:
                     current_state = self.qdrift_sim.simulate(sim_time, self.nb)
                     self.gate_count += self.qdrift_sim.gate_count
         return current_state
+    
+    # Computes time evolution exactly. Returns the final state and makes no internal changes.
+    def simulate_exact_output(self, time):
+        h_trott = [self.trotter_norms[ix] * self.trotter_operators[ix] for ix in range(len(self.trotter_norms))]
+        h_qd = [self.qdrift_norms[ix] * self.qdrift_operators[ix] for ix in range(len(self.qdrift_norms))]
+        h = sum(h_qd + h_trott)
+        u = linalg.expm(1j * h * time)
+        return u @ self.initial_state
 
 
 ######################################################################################################

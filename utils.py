@@ -11,7 +11,7 @@ from scipy import linalg
 from scipy import optimize
 from scipy import interpolate
 import math
-from numpy import random
+from numpy import outer, random
 import cmath
 import time as time_this
 from sqlalchemy import false
@@ -80,6 +80,9 @@ def graph_hamiltonian(x_dim, y_dim, rng_seed):
     return np.array(hamiltonian_list)
 
 #A function to generate a random initial state that is normalized
+# MH - This is not a good way to sample a uniform random state from high dimensional hilbert spaces, you get
+#    "measure concentration" around specific directions. For small dims should work fine, for large dims tread
+#    cautiously.
 def initial_state_randomizer(hilbert_dim):
     initial_state = []
     x = np.random.random(hilbert_dim)
@@ -102,12 +105,14 @@ def exact_time_evolution_density(hamiltonian_list, time, initial_rho):
     exp_op = linalg.expm(1j * sum(hamiltonian_list) * time)
     return exp_op @ initial_rho @ exp_op.conj().T
 
+
+# TODO - Need to get rid of exact output and compute it from the simulator and exact_time_evolution helper.
 # Inputs are self explanatory except simulator which can be any of 
 # TrotterSim, QDriftSim, CompositeSim
 # Outputs: a single shot estimate of the infidelity according to the exact output provided. 
-def single_infidelity_sample(simulator, time, exact_output, iterations = 1, nbsamples = 1):
-
+def single_infidelity_sample(simulator, time, iterations = 1, nbsamples = 1):
     sim_output = []
+    exact_output = simulator.simulate_exact_output(time)
 
     if type(simulator) == QDriftSim:
         sim_output = simulator.simulate(time, nbsamples)
@@ -121,16 +126,16 @@ def single_infidelity_sample(simulator, time, exact_output, iterations = 1, nbsa
     infidelity = 1 - (np.abs(np.dot(exact_output.conj().T, sim_output)).flat[0])**2
     return (infidelity, simulator.gate_count)
 
-def mutli_infidelity_sample(simulator, time, exact_output, iterations=1, nbsamples=1, mc_samples=MC_SAMPLES_DEFAULT):
+def mutli_infidelity_sample(simulator, time, iterations=1, nbsamples=1, mc_samples=MC_SAMPLES_DEFAULT):
     ret = []
 
     # No need to sample TrotterSim, just return single element list
     if type(simulator) == TrotterSim:
-        ret.append(single_infidelity_sample(simulator, time, exact_output, iterations=iterations, nbsamples=nbsamples))
+        ret.append(single_infidelity_sample(simulator, time, iterations=iterations, nbsamples=nbsamples))
         ret *= mc_samples
     else:
         for samp in range(mc_samples):
-            ret.append(single_infidelity_sample(simulator, time, exact_output, iterations=iterations, nbsamples=nbsamples))
+            ret.append(single_infidelity_sample(simulator, time, iterations=iterations, nbsamples=nbsamples))
 
     return ret
 
@@ -310,6 +315,14 @@ def partition_sim(simulator, partition_type = "prob", chop_threshold = 0.5, opti
         partition_sim_optimal_chop(simulator, time, epsilon)
 
     elif partition_type == "trotter":
+        partition_sim_trotter(simulator)
+    
+    elif partition_type == "first_order_trotter":
+        simulator.set_trotter_order(1)
+        partition_sim_trotter(simulator)
+    
+    elif partition_type == "second_order_trotter":
+        simulator.set_trotter_order(2)
         partition_sim_trotter(simulator)
 
     elif partition_type == "qdrift":
@@ -553,4 +566,5 @@ def test():
     # print("Now testing optimal chop")
     # partition_sim(compsim, "optimal_chop")
 
-test()
+if False:
+    test()
