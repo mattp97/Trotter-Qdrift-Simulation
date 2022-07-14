@@ -2,6 +2,6 @@ Pipfile
 Pipfile.lock
 venv/
 matt_squared/
-__pycache__/*
+__pycache__/
 *.json
 *.png
