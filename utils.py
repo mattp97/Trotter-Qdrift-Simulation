@@ -21,7 +21,7 @@ from skopt import gbrt_minimize
 from skopt.space import Real, Integer
 from skopt.utils import use_named_args
 import cProfile, pstats, io
-from compilers import CompositeSim, TrotterSim, QDriftSim, DensityMatrixSim
+from compilers import CompositeSim, TrotterSim, QDriftSim, DensityMatrixSim, profile, conditional_decorator
 
 MC_SAMPLES_DEFAULT = 10
 COST_LOOP_DEPTH = 30
@@ -110,6 +110,7 @@ def exact_time_evolution_density(hamiltonian_list, time, initial_rho):
 # Inputs are self explanatory except simulator which can be any of 
 # TrotterSim, QDriftSim, CompositeSim
 # Outputs: a single shot estimate of the infidelity according to the exact output provided. 
+@profile
 def single_infidelity_sample(simulator, time, iterations = 1, nbsamples = 1):
     sim_output = []
     exact_output = simulator.simulate_exact_output(time)
@@ -188,7 +189,7 @@ def get_iteration_bound(infidelity_fn, infidelity_bound, iter_bound, is_lower_bo
 #              samples are held fixed.
 # - mc_samples: Monte Carlo samples for wave function states, shouldn't be necessary with density matrices?
 # Returns (cost, iterations) - a tuple consisting of the gate cost and number of iterations needed to satisfy is_threshold_met 
-def find_optimal_cost(simulator, time, infidelity_threshold, heuristic = -1, mc_samples=MC_SAMPLES_DEFAULT):
+def find_optimal_cost(simulator, time, infidelity_threshold, heuristic = -1, mc_samples=MC_SAMPLES_DEFAULT, verbose=False):
     hamiltonian_list = simulator.get_hamiltonian_list()
     
     # choose random basis state to start out with
@@ -230,8 +231,8 @@ def find_optimal_cost(simulator, time, infidelity_threshold, heuristic = -1, mc_
         # NOTE: this lower bound should work because get_iteration_bound doubles until it finds an upper so half of this should be a lower.
         iter_lower = math.floor(iter_upper / 2) 
 
-
-    # print("[find_optimal_cost] iter_lower, iter_upper:", iter_lower, ", ", iter_upper)
+    if verbose:
+        print("[find_optimal_cost] found iteration bounds - lower, upper:", iter_lower, ", ", iter_upper)
     # bisection search until we find it.
     mid = 1
     count = 0
@@ -252,7 +253,8 @@ def find_optimal_cost(simulator, time, infidelity_threshold, heuristic = -1, mc_
         print("[find_optimal_cost] Reached loop depth, results may be inaccurate")
     ret = get_inf_and_cost(iter_upper)
     inf_tup, costs = zip(*ret)
-    # print("[find_optimal_cost] computed infidelity avg:", np.mean(list(inf_tup)))
+    if verbose:
+        print("[find_optimal_cost] computed infidelity avg:", np.mean(list(inf_tup)))
     return (np.mean(costs), iter_upper)
 
 # Computes the expected cost of a probabilistic partitioning scheme. 
