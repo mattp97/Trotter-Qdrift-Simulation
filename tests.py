@@ -2,6 +2,7 @@ from utils import *
 from compilers import *
 import numpy as np
 import matplotlib.pyplot as plt
+import time as timeit
 
 def evaluate_simulator(
         simulator,
@@ -48,9 +49,10 @@ def test_qdrift():
     print("[qdrift] hamiltonian:")
     print(len(graph_ham))
     sim = CompositeSim(graph_ham)
+    partition_sim(sim, "qdrift")
     # From results of a previous run, it looks like nb=225 for graph_hamiltonian(4, 2, 1) yields reasonable infidelity. Going to
-    # Optimize QDrift performance at this metric.  
-    single_infidelity_sample(sim, 0.1, iterations=225)
+    # Optimize QDrift performance at this metric.  Unoptimized it took 21.259 for the cumtime results from profile. 
+    multi_infidelity_sample(sim, 0.1, nbsamples=225, mc_samples=100)
 
 if __name__ == "__main__":
     test_qdrift()

@@ -110,7 +110,7 @@ def exact_time_evolution_density(hamiltonian_list, time, initial_rho):
 # Inputs are self explanatory except simulator which can be any of 
 # TrotterSim, QDriftSim, CompositeSim
 # Outputs: a single shot estimate of the infidelity according to the exact output provided. 
-@profile
+# @profile
 def single_infidelity_sample(simulator, time, iterations = 1, nbsamples = 1):
     sim_output = []
     exact_output = simulator.simulate_exact_output(time)
@@ -127,6 +127,7 @@ def single_infidelity_sample(simulator, time, iterations = 1, nbsamples = 1):
     infidelity = 1 - (np.abs(np.dot(exact_output.conj().T, sim_output)).flat[0])**2
     return (infidelity, simulator.gate_count)
 
+@profile
 def multi_infidelity_sample(simulator, time, iterations=1, nbsamples=1, mc_samples=MC_SAMPLES_DEFAULT):
     ret = []
 

@@ -319,14 +319,20 @@ class QDriftSim:
         return samples
     
     def simulate(self, time, samples):
+        start_time_ns = time_this.time_ns()
+        # print("at start")
+        # print("[simulate] ms since start:", (time_this.time_ns() - start_time_ns) * 1e3)
         self.gate_count = 0
+        if samples == 0:
+            np.copy(self.initial_state)
+        
         if "time" in self.exp_op_cache:
             if (self.exp_op_cache["time"] != time) or (self.exp_op_cache["samples"] != samples):
                 self.exp_op_cache.clear()
                 # WARNING: potential could allow for "time creep", by adjusting time 
                 # in multiple instances of FLOATING POINT PRECISION it could slowly
                 # drift from the time that the exponential operators used
-
+        # print("[checkpoint 1] ms since start:", (time_this.time_ns() - start_time_ns) * 1e3)
         if (len(self.hamiltonian_list) == 0): # or (len(self.hamiltonian_list) == 1) caused issues in comp sim
             return np.copy(self.initial_state) #make the choice not to sample a lone qdrift term
 
@@ -335,13 +341,26 @@ class QDriftSim:
         self.exp_op_cache["samples"] = samples
         final = np.copy(self.initial_state)
         obtained_samples = self.draw_hamiltonian_samples(samples)
+        checkpoint_2 = time_this.time_ns()
+        # print("[checkpoint 2] ms since start:", (checkpoint_2 - start_time_ns) * 1e3)
+        op_list = []
         for ix in obtained_samples:
-            if ix in self.exp_op_cache:
-                final = self.exp_op_cache.get(ix) @ final
-            else:
-                exp_h = linalg.expm(1.j * tau * self.hamiltonian_list[ix])
-                final = exp_h @ final
-                self.exp_op_cache[ix] = exp_h
+            if not ix in self.exp_op_cache:
+                self.exp_op_cache[ix] = linalg.expm(1.j * tau * self.hamiltonian_list[ix])
+            op_list.append(self.exp_op_cache[ix])
+        if len(op_list) == 1:
+            final = op_list[0] @ final
+        else:
+            final = np.linalg.multi_dot(op_list) @ final
+
+        # for ix in obtained_samples:
+        #     checkpoint_3 = time_this.time_ns()
+        #     # print("[checkpoint 3] ms since 2:", (checkpoint_3 - checkpoint_2) * 1e3)
+        #     if ix not in self.exp_op_cache:
+        #         self.exp_op_cache[ix] = linalg.expm(1.j * tau * self.hamiltonian_list[ix])
+        #     # print("[checkpoint 4] ms since 3:", (time_this.time_ns() - checkpoint_3) * 1e3)
+        #     final = self.exp_op_cache[ix] @ final
+        # print("[checkpoint 5] ms since start:", (time_this.time_ns() - start_time_ns) * 1e3)
         self.final_state = final
         self.gate_count = samples
         return np.copy(self.final_state)
