@@ -4,6 +4,10 @@ import numpy as np
 import matplotlib.pyplot as plt
 import time as timeit
 
+# Compares a composite simulator with the given partition types across the specified
+# time range. Returns a result dictionary that maps "times" to the array of times 
+# the simulators were evaluated and maps each partition string to the specified output
+# from "test_type" which defaults to infidelity. 
 def evaluate_simulator(
         simulator,
         t_start=1e-3,

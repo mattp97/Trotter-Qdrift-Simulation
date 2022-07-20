@@ -192,21 +192,26 @@ class TrotterSim:
             exp_h = self.exp_op_cache[(ix, timestep)]
             matrix_mul_list.append(exp_h)
 
-        if len(matrix_mul_list) == 1:
-            time_evol_op = matrix_mul_list[0]
-        else:
-            time_evol_op = np.linalg.multi_dot(matrix_mul_list)
-        time_evol_op = np.linalg.matrix_power(time_evol_op, iterations)
-        
-        # compute final output
+        # compute final output, let multi_dot figure out the cheapest way to perform all the matrix-matrix
+        # or matrix-vec multiplications. ALSO ITERATIONS IS HANDLED HERE in a really slick/sneaky way.
         final_state = np.copy(self.initial_state)
-        if self.use_density_matrices == False:
-            final_state = time_evol_op @ final_state
+        if len(matrix_mul_list) == 1:
+            if self.use_density_matrices:
+                reversed = [matrix_mul_list[0].conj().T]
+                final_state = np.linalg.multi_dot(matrix_mul_list * iterations + [self.initial_state] + reversed * iterations)
+            else:
+                final_state = np.linalg.multi_dot(matrix_mul_list * iterations + [self.initial_state])
         else:
-            final_state = time_evol_op @ final_state @ time_evol_op.conj().T
+            if self.use_density_matrices:
+                reversed = []
+                for mat in matrix_mul_list:
+                    reversed.insert(0, mat.conj().T)
+                final_state = np.linalg.multi_dot(matrix_mul_list * iterations + [self.initial_state] + reversed * iterations)
+            else:
+                final_state = np.linalg.multi_dot(matrix_mul_list * iterations + [self.initial_state])
         
         # TODO: This only uses the gates used for one side if we use density matrix, is this reasonable?
-        self.gate_count = len(matrix_mul_list)
+        self.gate_count = len(matrix_mul_list) * iterations
 
         return final_state        
     
