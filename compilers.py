@@ -195,20 +195,13 @@ class TrotterSim:
         # compute final output, let multi_dot figure out the cheapest way to perform all the matrix-matrix
         # or matrix-vec multiplications. ALSO ITERATIONS IS HANDLED HERE in a really slick/sneaky way.
         final_state = np.copy(self.initial_state)
-        if len(matrix_mul_list) == 1:
-            if self.use_density_matrices:
-                reversed = [matrix_mul_list[0].conj().T]
-                final_state = np.linalg.multi_dot(matrix_mul_list * iterations + [self.initial_state] + reversed * iterations)
-            else:
-                final_state = np.linalg.multi_dot(matrix_mul_list * iterations + [self.initial_state])
+        if self.use_density_matrices:
+            reversed = []
+            for mat in matrix_mul_list:
+                reversed.insert(0, mat.conj().T)
+            final_state = np.linalg.multi_dot(matrix_mul_list * iterations + [self.initial_state] + reversed * iterations)
         else:
-            if self.use_density_matrices:
-                reversed = []
-                for mat in matrix_mul_list:
-                    reversed.insert(0, mat.conj().T)
-                final_state = np.linalg.multi_dot(matrix_mul_list * iterations + [self.initial_state] + reversed * iterations)
-            else:
-                final_state = np.linalg.multi_dot(matrix_mul_list * iterations + [self.initial_state])
+            final_state = np.linalg.multi_dot(matrix_mul_list * iterations + [self.initial_state])
         
         # TODO: This only uses the gates used for one side if we use density matrix, is this reasonable?
         self.gate_count = len(matrix_mul_list) * iterations
@@ -329,7 +322,6 @@ class QDriftSim:
         tau = time * np.sum(self.spectral_norms) / (samples * 1.0)
         self.exp_op_cache["time"] = time
         self.exp_op_cache["samples"] = samples
-        final = np.copy(self.initial_state)
         obtained_samples = self.draw_hamiltonian_samples(samples)
 
         op_list = []
@@ -337,19 +329,19 @@ class QDriftSim:
             if ix not in self.exp_op_cache:
                 self.exp_op_cache[ix] = linalg.expm(1.j * tau * self.hamiltonian_list[ix])
             op_list.append(self.exp_op_cache[ix])
-        if len(op_list) == 1:
-            time_evol_op = op_list[0]
-        else:
-            time_evol_op = np.linalg.multi_dot(op_list)
 
-        if self.use_density_matrices == False:
-            final = time_evol_op @ final
+        final_state = np.copy(self.initial_state)
+        if self.use_density_matrices:
+            reversed = []
+            for mat in op_list:
+                reversed.insert(0, mat.conj().T)
+            final_state = np.linalg.multi_dot(op_list + [self.initial_state] + reversed)
         else:
-            final = time_evol_op @ final @ time_evol_op.conj().T
+            final_state = np.linalg.multi_dot(op_list + [self.initial_state])
 
-        self.final_state = final
+        self.final_state = final_state
         self.gate_count = samples
-        return np.copy(self.final_state)
+        return final_state
 
     def construct_density(self, time, samples):
         self.gate_count = 0
