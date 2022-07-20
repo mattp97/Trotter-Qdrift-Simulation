@@ -208,34 +208,7 @@ class TrotterSim:
         # TODO: This only uses the gates used for one side if we use density matrix, is this reasonable?
         self.gate_count = len(matrix_mul_list)
 
-        return final_state
-
-    def simulate_density(self, time, iterations):
-        self.gate_count = 0
-        if len(self.hamiltonian_list) == 0:
-            return np.copy(self.initial_state)
-
-        if "time" in self.exp_op_cache:
-            if (self.exp_op_cache["time"] != time) or (self.exp_op_cache["iterations"] != iterations):
-                self.exp_op_cache.clear()
-        
-        if self.exp_op_cache == {}:
-            self.exp_op_cache["time"] = time
-            self.exp_op_cache["iterations"] = iterations
-            op_time = time/iterations
-            steps = compute_trotter_timesteps(len(self.hamiltonian_list), op_time, self.order)
-            key = 0
-            for (ix, timestep) in steps:
-                self.exp_op_cache[key] = linalg.expm(1j * self.hamiltonian_list[ix] * self.spectral_norms[ix] * timestep)
-                self.conj_cache[key] = self.exp_op_cache.get(key).conj().T
-                key +=1
-        num_ops = len(self.exp_op_cache) - 2 #2 of the keys are for time and iters
-        psi = np.copy(self.initial_state)
-        for k in range(num_ops * iterations): 
-            psi = self.exp_op_cache[k % num_ops] @ psi @ self.conj_cache[k % num_ops]
-            self.final_state = psi
-            self.gate_count += 1
-        return psi                  
+        return final_state        
     
     
 # QDRIFT Simulator
@@ -356,7 +329,7 @@ class QDriftSim:
 
         op_list = []
         for ix in obtained_samples:
-            if not ix in self.exp_op_cache:
+            if ix not in self.exp_op_cache:
                 self.exp_op_cache[ix] = linalg.expm(1.j * tau * self.hamiltonian_list[ix])
             op_list.append(self.exp_op_cache[ix])
         if len(op_list) == 1:
@@ -369,31 +342,6 @@ class QDriftSim:
         else:
             final = time_evol_op @ final @ time_evol_op.conj().T
 
-        self.final_state = final
-        self.gate_count = samples
-        return np.copy(self.final_state)
-
-    def simulate_density(self, time, samples):
-        self.gate_count = 0
-        if "time" in self.exp_op_cache:
-            if (self.exp_op_cache["time"] != time) or (self.exp_op_cache["samples"] != samples):
-                self.exp_op_cache.clear()
-
-        if (len(self.hamiltonian_list) == 0): # or (len(self.hamiltonian_list) == 1) caused issues in comp sim
-            return np.copy(self.initial_state) #make the choice not to sample a lone qdrift term
-
-        tau = time * np.sum(self.spectral_norms) / (samples * 1.0)
-        self.exp_op_cache["time"] = time
-        self.exp_op_cache["samples"] = samples
-        final = np.copy(self.initial_state)
-        obtained_samples = self.draw_hamiltonian_samples(samples)
-        for ix in obtained_samples:
-            if ix in self.exp_op_cache:
-                final = self.exp_op_cache.get(ix) @ final @ self.exp_op_cache.get(ix).conj().T
-            else:
-                exp_h = linalg.expm(1.j * tau * self.hamiltonian_list[ix])
-                final = exp_h @ final @ exp_h.conj().T
-                self.exp_op_cache[ix] = exp_h
         self.final_state = final
         self.gate_count = samples
         return np.copy(self.final_state)
@@ -443,8 +391,6 @@ class QDriftSim:
 # - state_rand: use random initial states if true, use computational |0> if false. 
 
 ###############################################################################################################################################################
-#Composite simulation but using a framework with lists of tuples instead of lists of matrices for improved runtime
-#This code adopts the convention that for lists of tuples, indices are stored in [0] and values in [1]
 class CompositeSim:
     def __init__(
                 self,
