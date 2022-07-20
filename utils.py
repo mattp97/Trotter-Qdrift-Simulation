@@ -106,7 +106,6 @@ def exact_time_evolution_density(hamiltonian_list, time, initial_rho):
     return exp_op @ initial_rho @ exp_op.conj().T
 
 
-# TODO - Need to get rid of exact output and compute it from the simulator and exact_time_evolution helper.
 # Inputs are self explanatory except simulator which can be any of 
 # TrotterSim, QDriftSim, CompositeSim
 # Outputs: a single shot estimate of the infidelity according to the exact output provided. 
@@ -180,8 +179,7 @@ def get_iteration_bound(infidelity_fn, infidelity_bound, iter_bound, is_lower_bo
     print("[get_iteration_bound] Iteration upper bound exceeded. Proceed with caution.")
     return curr_guess
 
-# TODO: take in a "guess" parameter which tells you a ballpark. Then search around there, avoiding the need for exponential
-#       backoff and then binary search.
+
 # Varies the number of iterations needed for a simulator to acheive its infidelity threshold. WARNING: will modify the input
 # simulator starting state to a random basis state! Probably need to change this. 
 # Inputs

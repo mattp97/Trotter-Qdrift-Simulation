@@ -98,7 +98,7 @@ def compute_trotter_timesteps(numTerms, simTime, trotterOrder = 1):
 # - order: The trotter order, represented as "2k" in literature. 
 
 class TrotterSim:
-    def __init__(self, hamiltonian_list = [], order = 1):
+    def __init__(self, hamiltonian_list = [], order = 1, use_density_matrices = False):
         self.hamiltonian_list = []
         self.spectral_norms = []
         self.order = order
@@ -112,8 +112,12 @@ class TrotterSim:
         else:
             self.initial_state = np.zeros((hamiltonian_list[0].shape[0]))
         self.initial_state[0] = 1
-        self.final_state = np.copy(self.initial_state)
+        
+        self.use_density_matrices = use_density_matrices
+        if use_density_matrices == True:
+            self.initial_state = np.outer(self.initial_state, self.initial_state.conj())
 
+        self.final_state = np.copy(self.initial_state)
         self.prep_hamiltonian_lists(hamiltonian_list)
     
     # Helper function to compute spectral norm list. Used solely constructor
@@ -153,6 +157,7 @@ class TrotterSim:
 
     # Do some sanity checking before storing. Check if input is proper dimensions and an actual
     # quantum state.
+    # TODO: Check that the input matches shape? aka density matrix vs statevector
     def set_initial_state(self, psi_init):
         self.initial_state = psi_init
 
@@ -160,6 +165,8 @@ class TrotterSim:
         if len(self.hamiltonian_list) > 0:
             self.initial_state = np.zeros((self.hamiltonian_list[0].shape[0]))
             self.initial_state[0] = 1.
+        if self.use_density_matrices == True:
+            self.initial_state = np.outer(self.initial_state, self.initial_state.conj())
         #else:
             #print("[TrotterSim.reset_init_state] I don't have any dimensions")
 
@@ -172,22 +179,36 @@ class TrotterSim:
             if (self.exp_op_cache["time"] != time) or (self.exp_op_cache["iterations"] != iterations):
                 self.exp_op_cache.clear()
         
-        if self.exp_op_cache == {}:
+        if len(self.exp_op_cache) == 0:
             self.exp_op_cache["time"] = time
             self.exp_op_cache["iterations"] = iterations
-            op_time = time/iterations
-            steps = compute_trotter_timesteps(len(self.hamiltonian_list), op_time, self.order)
-            key = 0
-            for (ix, timestep) in steps:
-                self.exp_op_cache[key] = linalg.expm(1j * self.hamiltonian_list[ix] * self.spectral_norms[ix] * timestep)
-                key +=1
-        num_ops = len(self.exp_op_cache) - 2 #2 of the keys are for time and iters
-        psi = np.copy(self.initial_state)
-        for k in range(num_ops * iterations): 
-            psi = self.exp_op_cache[k % num_ops] @ psi
-            self.final_state = psi
-            self.gate_count += 1
-        return psi
+
+        op_time = time/iterations
+        steps = compute_trotter_timesteps(len(self.hamiltonian_list), op_time, self.order)
+        matrix_mul_list = []
+        for (ix, timestep) in steps:
+            if (ix, timestep) not in self.exp_op_cache:
+                self.exp_op_cache[(ix, timestep)] = linalg.expm(1j * self.hamiltonian_list[ix] * self.spectral_norms[ix] * timestep)
+            exp_h = self.exp_op_cache[(ix, timestep)]
+            matrix_mul_list.append(exp_h)
+
+        if len(matrix_mul_list) == 1:
+            time_evol_op = matrix_mul_list[0]
+        else:
+            time_evol_op = np.linalg.multi_dot(matrix_mul_list)
+        time_evol_op = np.linalg.matrix_power(time_evol_op, iterations)
+        
+        # compute final output
+        final_state = np.copy(self.initial_state)
+        if self.use_density_matrices == False:
+            final_state = time_evol_op @ final_state
+        else:
+            final_state = time_evol_op @ final_state @ time_evol_op.conj().T
+        
+        # TODO: This only uses the gates used for one side if we use density matrix, is this reasonable?
+        self.gate_count = len(matrix_mul_list)
+
+        return final_state
 
     def simulate_density(self, time, iterations):
         self.gate_count = 0
@@ -214,17 +235,7 @@ class TrotterSim:
             psi = self.exp_op_cache[k % num_ops] @ psi @ self.conj_cache[k % num_ops]
             self.final_state = psi
             self.gate_count += 1
-        return psi
-
-    def infidelity(self, time, iterations):
-        H = []
-        for i in range(len(self.spectral_norms)):
-            H.append(self.hamiltonian_list[i] * self.spectral_norms[i]) 
-        sim_state = self.simulate(time, iterations)
-        good_state = np.dot(linalg.expm(1j * sum(H) * time), self.initial_state)
-        infidelity = 1 - (np.abs(np.dot(good_state.conj().T, sim_state)))**2
-        #infidelity = (np.linalg.norm(sim_state - good_state)) #-- Euclidean distance                    
-        return infidelity                         
+        return psi                  
     
     
 # QDRIFT Simulator
@@ -240,7 +251,7 @@ class TrotterSim:
 # - rng_seed: Seed for the random number generator so results are reproducible.
     
 class QDriftSim:
-    def __init__(self, hamiltonian_list = [], rng_seed = 1):
+    def __init__(self, hamiltonian_list = [], rng_seed = 1, use_density_matrices=False):
         self.hamiltonian_list = []
         self.spectral_norms = []
         self.rng_seed = rng_seed
@@ -255,8 +266,11 @@ class QDriftSim:
         else:
             self.initial_state = np.zeros((hamiltonian_list[0].shape[0]))
         self.initial_state[0] = 1
-        self.final_state = np.copy(self.initial_state)
 
+        self.use_density_matrices = use_density_matrices
+        if use_density_matrices == True:
+            self.initial_state = np.outer(self.initial_state, self.initial_state.conj())
+        self.final_state = np.copy(self.initial_state)
         
         np.random.seed(self.rng_seed)
 
@@ -280,6 +294,7 @@ class QDriftSim:
 
     # Do some sanity checking before storing. Check if input is proper dimensions and an actual
     # quantum state.
+    # TODO: check inputs match? aka density matrix vs not
     def set_initial_state(self, psi_init):
         self.initial_state = psi_init
 
@@ -287,8 +302,8 @@ class QDriftSim:
         if len(self.hamiltonian_list) > 0:
             self.initial_state = np.zeros((self.hamiltonian_list[0].shape[0]))
             self.initial_state[0] = 1.
-        #else:
-            #print("[qdrift_sim reset_init_state] I have no dims")
+        if self.use_density_matrices:
+            self.initial_state = np.outer(self.initial_state, self.initial_state.conj())
 
     # Assumes terms are already normalized
     def set_hamiltonian(self, mat_list = [], norm_list = []):
@@ -319,9 +334,6 @@ class QDriftSim:
         return samples
     
     def simulate(self, time, samples):
-        start_time_ns = time_this.time_ns()
-        # print("at start")
-        # print("[simulate] ms since start:", (time_this.time_ns() - start_time_ns) * 1e3)
         self.gate_count = 0
         if samples == 0:
             np.copy(self.initial_state)
@@ -332,7 +344,7 @@ class QDriftSim:
                 # WARNING: potential could allow for "time creep", by adjusting time 
                 # in multiple instances of FLOATING POINT PRECISION it could slowly
                 # drift from the time that the exponential operators used
-        # print("[checkpoint 1] ms since start:", (time_this.time_ns() - start_time_ns) * 1e3)
+
         if (len(self.hamiltonian_list) == 0): # or (len(self.hamiltonian_list) == 1) caused issues in comp sim
             return np.copy(self.initial_state) #make the choice not to sample a lone qdrift term
 
@@ -341,26 +353,22 @@ class QDriftSim:
         self.exp_op_cache["samples"] = samples
         final = np.copy(self.initial_state)
         obtained_samples = self.draw_hamiltonian_samples(samples)
-        checkpoint_2 = time_this.time_ns()
-        # print("[checkpoint 2] ms since start:", (checkpoint_2 - start_time_ns) * 1e3)
+
         op_list = []
         for ix in obtained_samples:
             if not ix in self.exp_op_cache:
                 self.exp_op_cache[ix] = linalg.expm(1.j * tau * self.hamiltonian_list[ix])
             op_list.append(self.exp_op_cache[ix])
         if len(op_list) == 1:
-            final = op_list[0] @ final
+            time_evol_op = op_list[0]
         else:
-            final = np.linalg.multi_dot(op_list) @ final
+            time_evol_op = np.linalg.multi_dot(op_list)
 
-        # for ix in obtained_samples:
-        #     checkpoint_3 = time_this.time_ns()
-        #     # print("[checkpoint 3] ms since 2:", (checkpoint_3 - checkpoint_2) * 1e3)
-        #     if ix not in self.exp_op_cache:
-        #         self.exp_op_cache[ix] = linalg.expm(1.j * tau * self.hamiltonian_list[ix])
-        #     # print("[checkpoint 4] ms since 3:", (time_this.time_ns() - checkpoint_3) * 1e3)
-        #     final = self.exp_op_cache[ix] @ final
-        # print("[checkpoint 5] ms since start:", (time_this.time_ns() - start_time_ns) * 1e3)
+        if self.use_density_matrices == False:
+            final = time_evol_op @ final
+        else:
+            final = time_evol_op @ final @ time_evol_op.conj().T
+
         self.final_state = final
         self.gate_count = samples
         return np.copy(self.final_state)
@@ -420,17 +428,6 @@ class QDriftSim:
         self.gate_count = samples
         return np.copy(self.final_state)
 
-    def sample_channel_inf(self, time, samples, mcsamples):
-        sample_fidelity = []
-        H = []
-        for i in range(len(self.spectral_norms)):
-            H.append(self.hamiltonian_list[i] * self.spectral_norms[i])
-        for s in range(mcsamples):
-            sim_state = self.simulate(time, samples)
-            good_state = np.dot(linalg.expm(1j * sum(H) * time), self.initial_state)
-            sample_fidelity.append((np.abs(np.dot(good_state.conj().T, sim_state)))**2)
-        infidelity = 1- sum(sample_fidelity) / mcsamples 
-        return infidelity
     
 
 # Composite Simulator
@@ -456,7 +453,8 @@ class CompositeSim:
                 outer_order = 1,
                 rng_seed = 1,
                 nb = 1,
-                state_rand = False
+                state_rand = False,
+                use_density_matrices = False,
                 ):
         self.trotter_operators = []
         self.trotter_norms = []
@@ -470,8 +468,8 @@ class CompositeSim:
 
         self.state_rand = state_rand
 
-        self.qdrift_sim = QDriftSim()
-        self.trotter_sim = TrotterSim(order = inner_order)
+        self.qdrift_sim = QDriftSim(use_density_matrices=use_density_matrices)
+        self.trotter_sim = TrotterSim(order = inner_order, use_density_matrices=use_density_matrices)
 
         self.nb = nb #number of Qdrift channel samples. Useful to define as an attribute if we are choosing whether or not to optimize over it. Only used in analytic cost optimization
 
@@ -485,7 +483,11 @@ class CompositeSim:
             # Use the first computational basis state as the initial state until the user specifies.
             self.initial_state = np.zeros((self.hilbert_dim, 1))
             self.initial_state[0] = 1.
-        
+        self.use_density_matrices = use_density_matrices
+        if use_density_matrices == True:
+            self.initial_state = np.outer(self.initial_state, self.initial_state.conj())
+        self.trotter_sim.set_initial_state(self.initial_state)
+        self.qdrift_sim.set_initial_state(self.initial_state)
         self.final_state = np.copy(self.initial_state)
         self.unparsed_hamiltonian = np.copy(hamiltonian_list) #the unmodified input matrix
 
@@ -510,6 +512,8 @@ class CompositeSim:
     def reset_init_state(self):
         self.initial_state = np.zeros((self.hilbert_dim, 1))
         self.initial_state[0] = 1.
+        if self.use_density_matrices == True:
+            self.initial_state = np.outer(self.initial_state, self.initial_state.conj())
         self.trotter_sim.reset_init_state()
         self.qdrift_sim.reset_init_state()
 
@@ -517,6 +521,8 @@ class CompositeSim:
         rng_ix = np.random.randint(0, self.hilbert_dim)
         init = np.copy(self.initial_state) * 0
         init[rng_ix] = 1.
+        if self.use_density_matrices == True:
+            init = np.outer(init, init.conj())
         self.set_initial_state(init)
     
     def set_trotter_order(self, inner_order, outer_order=1):
@@ -578,6 +584,9 @@ class CompositeSim:
                     self.qdrift_sim.set_initial_state(current_state)
                     current_state = self.qdrift_sim.simulate(sim_time, self.nb)
                     self.gate_count += self.qdrift_sim.gate_count
+        # return nested simulator initial states to normal
+        self.trotter_sim.set_initial_state(self.initial_state)
+        self.qdrift_sim.set_initial_state(self.initial_state)
         return current_state
     
     # Computes time evolution exactly. Returns the final state and makes no internal changes.
