@@ -2,8 +2,8 @@ from ast import And
 from asyncore import loop
 from mimetypes import init
 from operator import matmul
+from telnetlib import AYT
 from cirq import sample
-from more_itertools import partition
 import numpy as np
 import matplotlib.pyplot as plt
 import statistics
@@ -11,10 +11,9 @@ from scipy import linalg
 from scipy import optimize
 from scipy import interpolate
 import math
-from numpy import outer, random
+from numpy import arange, linspace, outer, random
 import cmath
 import time as time_this
-from sqlalchemy import false
 from sympy import S, symbols, printing
 from skopt import gp_minimize
 from skopt import gbrt_minimize
@@ -537,6 +536,40 @@ def sample_decider(simulator, time, samples, iterations, mc_sample_guess, epsilo
         else:
             sample_guess *= 2
     return int(sample_guess/2)
+
+def hamiltonian_localizer_1d(local_hamiltonian, sub_block_size, sub_blocks = 1):
+    #A function to do an m=1 block decomposition of a nearest neighbour hamiltonian. Takes a tupel as input where 
+    # indices 0, 1, 2 are the Hamiltonian terms, 1d lattice indices, and legnth of the lattice respectfully.
+    #The funciton outputs 3 new "local" lists that can then be partitioned
+    list_of_hamiltonians = []
+    A, a = [], []
+    Y, y = [], []
+    B, b = [], []
+    terms, indices, length = local_hamiltonian
+    midpoint = int(length/2) 
+    start = midpoint - (int(sub_block_size/2))
+    stop = start + sub_block_size 
+    if start < 1:
+        raise Exception("sub block is the size of or larger than the Hamiltonian")
+    
+    ix = 0
+    while ix < len(terms): 
+        if not set(indices[ix]).isdisjoint(arange(start, stop)) == True: #Y region
+            Y.append(-1 * terms[ix])
+            y.append(indices[ix])
+
+        if not set(indices[ix]).isdisjoint(arange(start, len(terms))) == True: #B region
+            B.append(terms[ix])
+            b.append(indices[ix])
+
+        if not set(indices[ix]).isdisjoint(arange(0, stop)): #A region
+            A.append(terms[ix])
+            a.append(indices[ix])
+        ix += 1
+    return (a, y, b)
+
+def lieb_robinson_partitioner(loacal_block_ham, partitioning_method):
+    return
 
 def test():
     hamiltonian = graph_hamiltonian(2, 1, 1)
