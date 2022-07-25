@@ -5,3 +5,4 @@ matt_squared/
 __pycache__/
 *.json
 *.png
+*.hdf5
