@@ -4,6 +4,11 @@ import numpy as np
 import matplotlib.pyplot as plt
 import time as timeit
 
+# For coordinating runs. 
+class Experiment:
+    def __init__(self, hamiltonian_list):
+        sim = CompositeSim(hamiltonian_list=hamiltonian_list)        
+
 # Compares a composite simulator with the given partition types across the specified
 # time range. Returns a result dictionary that maps "times" to the array of times 
 # the simulators were evaluated and maps each partition string to the specified output
