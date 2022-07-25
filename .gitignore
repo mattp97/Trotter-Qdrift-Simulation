@@ -6,3 +6,4 @@ __pycache__/
 *.json
 *.png
 *.hdf5
+*.pickle

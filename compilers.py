@@ -452,7 +452,7 @@ class CompositeSim:
     def get_lambda(self):
         return sum(self.qdrift_norms) + sum(self.trotter_norms)
 
-    def reset_init_state(self):
+    def reset_initial_state(self):
         self.initial_state = np.zeros((self.hilbert_dim, 1))
         self.initial_state[0] = 1.
         if self.use_density_matrices == True:
@@ -462,7 +462,7 @@ class CompositeSim:
 
     def randomize_initial_state(self):
         rng_ix = np.random.randint(0, self.hilbert_dim)
-        init = np.copy(self.initial_state) * 0
+        init = np.zeros((self.hilbert_dim, 1))
         init[rng_ix] = 1.
         if self.use_density_matrices == True:
             init = np.outer(init, init.conj())
@@ -477,6 +477,11 @@ class CompositeSim:
         self.initial_state = state
         self.trotter_sim.set_initial_state(state)
         self.qdrift_sim.set_initial_state(state)
+
+    def set_hamiltonian(self, hamiltonian_list):
+        self.hilbert_dim = hamiltonian_list[0].shape[0]
+        self.set_partition(hamiltonian_list, [])
+        self.reset_initial_state()
 
     # Inputs: trotter_list - a python list of numpy arrays, each element is a single term in a hamiltonian
     #         qdrift_list - same but these terms go into the qdrift simulator. 
