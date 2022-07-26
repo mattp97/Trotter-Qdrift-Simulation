@@ -541,10 +541,9 @@ def hamiltonian_localizer_1d(local_hamiltonian, sub_block_size, sub_blocks = 1):
     #A function to do an m=1 block decomposition of a nearest neighbour hamiltonian. Takes a tupel as input where 
     # indices 0, 1, 2 are the Hamiltonian terms, 1d lattice indices, and legnth of the lattice respectfully.
     #The funciton outputs 3 new "local" lists that can then be partitioned
-    list_of_hamiltonians = []
-    A, a = [], []
-    Y, y = [], []
-    B, b = [], []
+    a_terms, a_index = [], []
+    y_terms, y_index = [], []
+    b_terms, b_index = [], []
     terms, indices, length = local_hamiltonian
     midpoint = int(length/2) 
     start = midpoint - (int(sub_block_size/2))
@@ -555,21 +554,26 @@ def hamiltonian_localizer_1d(local_hamiltonian, sub_block_size, sub_blocks = 1):
     ix = 0
     while ix < len(terms): 
         if not set(indices[ix]).isdisjoint(arange(start, stop)) == True: #Y region
-            Y.append(-1 * terms[ix])
-            y.append(indices[ix])
+            y_terms.append(-1 * terms[ix])
+            y_index.append(indices[ix])
 
         if not set(indices[ix]).isdisjoint(arange(start, len(terms))) == True: #B region
-            B.append(terms[ix])
-            b.append(indices[ix])
+            b_terms.append(terms[ix])
+            b_index.append(indices[ix])
 
         if not set(indices[ix]).isdisjoint(arange(0, stop)): #A region
-            A.append(terms[ix])
-            a.append(indices[ix])
+            a_terms.append(terms[ix])
+            a_index.append(indices[ix])
         ix += 1
-    return (a, y, b)
+    if ((len(a_terms) == 0) or (len(b_terms) == 0) or (len(y_terms) == 0)):
+        raise Exception("poor block choice, one of the blocks is empty")
+    return (a_terms, y_terms, b_terms)
 
-def lieb_robinson_partitioner(loacal_block_ham, partitioning_method):
-    return
+def lieb_robinson_sim(localized_hamiltonian, in_trotter_order, partition):
+    for i in localized_hamiltonian:
+        block_sim = CompositeSim(i, inner_order=in_trotter_order)
+        partition_sim(simulator=block_sim, partition_type = partition) #idea to generate each as a sim an keep track of the current state and total gate count
+    return None
 
 def test():
     hamiltonian = graph_hamiltonian(2, 1, 1)

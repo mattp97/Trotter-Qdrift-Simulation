@@ -20,6 +20,8 @@ from skopt.space import Real, Integer
 from skopt.utils import use_named_args
 import cProfile, pstats, io
 
+from utils import initial_state_randomizer
+
 
 #A simple profiler. To use this, place @profile above the function of interest
 def profile(fnc):
@@ -60,8 +62,7 @@ FLOATING_POINT_PRECISION = 1e-10
 # Note the reverse ordering due to matrix multiplication :'( 
 def compute_trotter_timesteps(numTerms, simTime, trotterOrder = 1):
     if type(trotterOrder) != type(1):
-        print('[compute_trotter_timesteps] trotterOrder input is not an int')
-        return 1
+        raise Exception('[compute_trotter_timesteps] trotterOrder input is not an int')
 
     if trotterOrder == 1:
         return [(ix, simTime) for ix in range(numTerms)]
@@ -82,8 +83,7 @@ def compute_trotter_timesteps(numTerms, simTime, trotterOrder = 1):
         return ret
 
     else:
-        print("[compute_trotter_timesteps] trotterOrder seems to be bad")
-        return 1
+        raise Exception("[compute_trotter_timesteps] trotterOrder seems to be bad")
 
 # A basic trotter simulator organizer.
 # Inputs
@@ -398,6 +398,7 @@ class CompositeSim:
                 nb = 1,
                 state_rand = False,
                 use_density_matrices = False,
+                lr_hamiltonian = None
                 ):
         self.trotter_operators = []
         self.trotter_norms = []
@@ -407,6 +408,10 @@ class CompositeSim:
             self.hilbert_dim = hamiltonian_list[0].shape[0] 
         else:
             self.hilbert_dim = 0
+        
+        self.lr_hamiltonian = lr_hamiltonian #contains a tuple of the form (A, Y, B) where each are Hamiltonian lists of the original form
+
+        # self.hilbert_dim = hamiltonian_list[0].shape[0] 
         self.rng_seed = rng_seed
         self.outer_order = outer_order 
         self.inner_order = inner_order
@@ -445,6 +450,11 @@ class CompositeSim:
 
         # if nb_optimizer == True:
         #     print("Nb is equal to " + str(self.nb))
+
+        if lr_hamiltonian != None:
+            for i in lr_hamiltonian:
+                pass #here we would normalize each term and make lists of norms and matrices for simulate 
+            #how would partitioning work in this framework?
 
     def get_hamiltonian_list(self):
         ret = []
@@ -991,3 +1001,50 @@ class DensityMatrixSim:
         #print(self.gate_data)
         #fit = np.poly1d(np.polyfit(self.gate_data[:,1], self.gate_data[:,0], 1)) #linear best fit 
         #return fit(self.epsilon)
+
+class LRsim: 
+    def __init__(
+        self,
+        hamiltonian_list, 
+        local_hamiltonian, #a tuple of lists of H terms: each index of the tuple contains a list representing a local block
+        inner_order,
+        partition,
+        nb
+    ):
+        self.gate_count = 0
+        self.local_hamiltonian = local_hamiltonian
+        self.inner_order = inner_order
+        self.spectral_norms = [] # a list of lists of the spectral norms of each local bracket
+        self.partition = partition 
+        
+        self.qdrift_sim = QDriftSim(use_density_matrices=True)
+        self.trotter_sim = TrotterSim(order = inner_order, use_density_matrices=True)
+
+        self.nb = nb
+
+        for i in range(len(self.local_hamiltonian)):
+            temp = []
+            for j in range(len(self.local_hamiltonian[i])):
+                temp.append(np.linalg.norm(self.local_hamiltonian[i][j], ord = 2))
+            self.spectral_norms.append(temp)
+
+        #Choose to randomize the initial state or just use computational |0>
+        #Should probably add functionality to take an initial state as input at some point
+        if self.state_rand == True:
+            self.initial_state = initial_state_randomizer(self.hilbert_dim)
+        else:
+            # Use the first computational basis state as the initial state until the user specifies.
+            self.initial_state = np.zeros((self.hilbert_dim, 1))
+            self.initial_state[0] = 1.
+        
+        self.initial_state = np.outer(self.initial_state, self.initial_state.conj())
+        self.trotter_sim.set_initial_state(self.initial_state)
+        self.qdrift_sim.set_initial_state(self.initial_state)
+        self.final_state = np.copy(self.initial_state)
+
+
+
+    def simulate(self):
+        return np.copy(self.final_state)
+
+
