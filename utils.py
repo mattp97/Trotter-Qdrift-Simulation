@@ -2,7 +2,7 @@ from ast import And
 from asyncore import loop
 from mimetypes import init
 from operator import matmul
-from telnetlib import AYT
+# from telnetlib import AYT
 from cirq import sample
 import numpy as np
 import matplotlib.pyplot as plt
