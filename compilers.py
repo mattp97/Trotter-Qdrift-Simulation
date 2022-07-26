@@ -403,8 +403,10 @@ class CompositeSim:
         self.trotter_norms = []
         self.qdrift_operators = []
         self.qdrift_norms = []
-
-        self.hilbert_dim = hamiltonian_list[0].shape[0] 
+        if len(hamiltonian_list) > 0:
+            self.hilbert_dim = hamiltonian_list[0].shape[0] 
+        else:
+            self.hilbert_dim = 0
         self.rng_seed = rng_seed
         self.outer_order = outer_order 
         self.inner_order = inner_order
@@ -420,12 +422,15 @@ class CompositeSim:
 
         #Choose to randomize the initial state or just use computational |0>
         #Should probably add functionality to take an initial state as input at some point
-        if self.state_rand == True:
-            self.initial_state = initial_state_randomizer(self.hilbert_dim)
+        if self.hilbert_dim > 0:
+            if self.state_rand == True:
+                self.initial_state = initial_state_randomizer(self.hilbert_dim)
+            else:
+                # Use the first computational basis state as the initial state until the user specifies.
+                self.initial_state = np.zeros((self.hilbert_dim, 1))
+                self.initial_state[0] = 1.
         else:
-            # Use the first computational basis state as the initial state until the user specifies.
-            self.initial_state = np.zeros((self.hilbert_dim, 1))
-            self.initial_state[0] = 1.
+            self.initial_state = np.zeros((1,1))
         self.use_density_matrices = use_density_matrices
         if use_density_matrices == True:
             self.initial_state = np.outer(self.initial_state, self.initial_state.conj())

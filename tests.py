@@ -1,4 +1,6 @@
 import sys
+
+from sqlalchemy import false
 from utils import *
 from compilers import *
 import numpy as np
@@ -198,12 +200,13 @@ def compute_entry_point():
     print("#" * 50)
     print("settings found:")
     print(settings)
-    # working_dir = scratch_dir + 'output'
-    # os.mkdir(working_dir)
-    # exp = Experiment(output_directory=working_dir)
-    # exp.load_hamiltonian(ham_path)
-    # exp.load_settings(settings_path)
-    # exp.run()
+    working_dir = scratch_dir + 'output'
+    if os.path.exists(working_dir) == False:
+        os.mkdir(working_dir)
+    exp = Experiment(output_directory=working_dir)
+    exp.load_hamiltonian(ham_path)
+    exp.load_settings(settings_path)
+    exp.run()
 
 if __name__ == "__main__":
     if sys.argv[1] == "client":
