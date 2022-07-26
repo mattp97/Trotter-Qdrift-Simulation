@@ -20,7 +20,7 @@ from skopt.space import Real, Integer
 from skopt.utils import use_named_args
 import cProfile, pstats, io
 
-from utils import initial_state_randomizer
+# from utils import initial_state_randomizer
 
 
 #A simple profiler. To use this, place @profile above the function of interest
