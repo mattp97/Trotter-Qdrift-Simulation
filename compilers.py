@@ -391,7 +391,8 @@ class CompositeSim:
                 nb = 1,
                 state_rand = False,
                 use_density_matrices = False,
-                lr_hamiltonian = None
+                lr_hamiltonian = None,
+                verbose = False,
                 ):
         self.trotter_operators = []
         self.trotter_norms = []
@@ -448,6 +449,7 @@ class CompositeSim:
             for i in lr_hamiltonian:
                 pass #here we would normalize each term and make lists of norms and matrices for simulate 
             #how would partitioning work in this framework?
+        self.verbose = verbose
 
     def get_hamiltonian_list(self):
         ret = []

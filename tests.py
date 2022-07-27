@@ -31,7 +31,7 @@ class Experiment:
         use_density_matrices=False,
         verbose=False
         ):
-        self.sim = CompositeSim(hamiltonian_list=hamiltonian_list, use_density_matrices=use_density_matrices)
+        self.sim = CompositeSim(hamiltonian_list=hamiltonian_list, use_density_matrices=use_density_matrices, verbose=verbose)
         self.use_density_matrices = use_density_matrices
         self.times = np.geomspace(t_start, t_stop, t_steps)
         self.partitions = partitions
@@ -57,9 +57,10 @@ class Experiment:
         unpickled = pickle.load(open(output_path, 'rb'))
         output_shape = unpickled[-1]
         ham_list = []
-        for ix in range(len(output_shape) - 1):
+        for ix in range(len(unpickled) - 1):
             ham_list.append(np.array(unpickled[ix]).reshape(output_shape))
         self.sim.set_hamiltonian(ham_list)
+        print("unpickled this many terms", len(ham_list))
     
     # TODO: implement multithreading?
     # TODO: How to handle probabilistic partitionings?
@@ -70,7 +71,12 @@ class Experiment:
             if self.verbose:
                 print("[Experiment.run] evaluating partition type:", partition)
             outputs = []
+            print("partitioning before any time loops")
+            self.sim.print_partition()
             partition_sim(self.sim, partition_type=partition)
+            print("#" * 75)
+            print("partition after partitioning")
+            self.sim.print_partition()
             heuristic = -1
             for t in results["times"]:
                 if self.verbose:
@@ -195,8 +201,7 @@ def compute_entry_point():
         sys.exit()
     ham_list = pickle.load(open(ham_path, 'rb'))
     settings = pickle.load(open(settings_path, 'rb'))
-    print("[compute_entry_point] hamiltonian found:")
-    print(ham_list)
+    print("[compute_entry_point] hamiltonian found with this many terms:", len(ham_list))
     print("#" * 50)
     print("settings found:")
     print(settings)
