@@ -7,3 +7,4 @@ __pycache__/
 *.png
 *.hdf5
 *.pickle
+testing/*

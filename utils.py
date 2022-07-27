@@ -2,7 +2,7 @@ from ast import And
 from asyncore import loop
 from mimetypes import init
 from operator import matmul
-from telnetlib import AYT
+# from telnetlib import AYT
 from cirq import sample
 import numpy as np
 import matplotlib.pyplot as plt
@@ -82,13 +82,13 @@ def graph_hamiltonian(x_dim, y_dim, rng_seed):
 # MH - This is not a good way to sample a uniform random state from high dimensional hilbert spaces, you get
 #    "measure concentration" around specific directions. For small dims should work fine, for large dims tread
 #    cautiously.
-def initial_state_randomizer(hilbert_dim):
-    initial_state = []
-    x = np.random.random(hilbert_dim)
-    y = np.random.random(hilbert_dim)
-    initial_state = x + (1j * y) 
-    initial_state_norm = initial_state / np.linalg.norm(initial_state)
-    return initial_state_norm
+# def initial_state_randomizer(hilbert_dim):
+#     initial_state = []
+#     x = np.random.random(hilbert_dim)
+#     y = np.random.random(hilbert_dim)
+#     initial_state = x + (1j * y) 
+#     initial_state_norm = initial_state / np.linalg.norm(initial_state)
+#     return initial_state_norm
 
 #A function to calculate the trace distance between two numpy arrays (density operators)
 def trace_distance(rho, sigma):

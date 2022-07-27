@@ -1,19 +1,10 @@
-from ast import And
-from asyncore import loop
-from mimetypes import init
-from operator import matmul
-from matplotlib import use
 import numpy as np
-import matplotlib.pyplot as plt
 import statistics
 from scipy import linalg
 from scipy import optimize
 from scipy import interpolate
-import math
 from numpy import inner, mat, random
-import cmath
-import time as time_this
-#from sqlalchemy import false #What is this package? -- the first 4 dont look used
+# import time as time_this
 from sympy import S, symbols, printing
 from skopt import gp_minimize
 from skopt import gbrt_minimize
@@ -21,7 +12,7 @@ from skopt.space import Real, Integer
 from skopt.utils import use_named_args
 import cProfile, pstats, io
 
-from utils import initial_state_randomizer
+# from utils import initial_state_randomizer
 
 
 #A simple profiler. To use this, place @profile above the function of interest
@@ -404,8 +395,12 @@ class CompositeSim:
         self.trotter_norms = []
         self.qdrift_operators = []
         self.qdrift_norms = []
+        if len(hamiltonian_list) > 0:
+            self.hilbert_dim = hamiltonian_list[0].shape[0] 
+        else:
+            self.hilbert_dim = 0
 
-        self.hilbert_dim = hamiltonian_list[0].shape[0] 
+        # self.hilbert_dim = hamiltonian_list[0].shape[0] 
         self.rng_seed = rng_seed
         self.outer_order = outer_order 
         self.inner_order = inner_order
@@ -421,12 +416,15 @@ class CompositeSim:
 
         #Choose to randomize the initial state or just use computational |0>
         #Should probably add functionality to take an initial state as input at some point
-        if self.state_rand == True:
-            self.initial_state = initial_state_randomizer(self.hilbert_dim)
+        if self.hilbert_dim > 0:
+            if self.state_rand == True:
+                self.initial_state = initial_state_randomizer(self.hilbert_dim)
+            else:
+                # Use the first computational basis state as the initial state until the user specifies.
+                self.initial_state = np.zeros((self.hilbert_dim, 1))
+                self.initial_state[0] = 1.
         else:
-            # Use the first computational basis state as the initial state until the user specifies.
-            self.initial_state = np.zeros((self.hilbert_dim, 1))
-            self.initial_state[0] = 1.
+            self.initial_state = np.zeros((1,1))
         self.use_density_matrices = use_density_matrices
         if use_density_matrices == True:
             self.initial_state = np.outer(self.initial_state, self.initial_state.conj())

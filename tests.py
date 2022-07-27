@@ -1,10 +1,12 @@
 import sys
+
 from utils import *
 from compilers import *
 import numpy as np
 
 import pickle
 import os
+import matplotlib.pyplot as plt
 
 INFIDELITY_TEST_TYPE = "infidelity"
 TRACE_DIST_TEST_TYPE = "trace_distance"
@@ -142,14 +144,14 @@ def find_pickles():
         settings_path = None
     return ham_path, settings_path, scratch_path
     
-def client_entry_point():
+def setup_entry_point():
     if len(sys.argv) == 3:
         output_dir = sys.argv[-1]
     else:
-        print("[client_entry_point] No output directory given, using SCRATCH")
+        print("[setup_entry_point] No output directory given, using SCRATCH")
         scratch_path = os.getenv("SCRATCH")
         if type(scratch_path) != type("string"):
-            print("[client_entry_point] No directory given and no scratch path")
+            print("[setup_entry_point] No directory given and no scratch path")
         output_dir = scratch_path
     if output_dir[-1] != '/':
         output_dir += '/'
@@ -198,18 +200,38 @@ def compute_entry_point():
     print("#" * 50)
     print("settings found:")
     print(settings)
-    # working_dir = scratch_dir + 'output'
-    # os.mkdir(working_dir)
-    # exp = Experiment(output_directory=working_dir)
-    # exp.load_hamiltonian(ham_path)
-    # exp.load_settings(settings_path)
-    # exp.run()
+    working_dir = scratch_dir + 'output'
+    if os.path.exists(working_dir) == False:
+        os.mkdir(working_dir)
+    exp = Experiment(output_directory=working_dir)
+    exp.load_hamiltonian(ham_path)
+    exp.load_settings(settings_path)
+    exp.run()
+
+# Analyze the results from the results.pickle file of a previous run
+def analyze_entry_point():
+    if len(sys.argv) == 3:
+        results_path = sys.argv[-1]
+    else:
+        print("[analyze_entry_point] No results.pickle file path provided. quitting.")
+        sys.exit()
+    results = pickle.load(open(results_path, 'rb'))
+    print("results:")
+    print(results)
+    times = results["times"]
+    for k,v in results.items():
+        if k != "times":
+            plt.plot(times, v, label=k)
+    plt.show()
+
 
 if __name__ == "__main__":
-    if sys.argv[1] == "client":
-        client_entry_point()
+    if sys.argv[1] == "setup":
+        setup_entry_point()
     if sys.argv[1] == "compute":
         compute_entry_point()
+    if sys.argv[1] == "analyze":
+        analyze_entry_point()
     
 
     
