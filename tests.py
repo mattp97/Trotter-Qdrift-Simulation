@@ -6,6 +6,7 @@ import numpy as np
 
 import pickle
 import os
+import matplotlib.pyplot as plt
 
 INFIDELITY_TEST_TYPE = "infidelity"
 TRACE_DIST_TEST_TYPE = "trace_distance"
@@ -217,6 +218,12 @@ def analyze_entry_point():
     results = pickle.load(open(results_path, 'rb'))
     print("results:")
     print(results)
+    times = results["times"]
+    for k,v in results.items():
+        if k != "times":
+            plt.plot(times, v, label=k)
+    plt.show()
+
 
 if __name__ == "__main__":
     if sys.argv[1] == "setup":
