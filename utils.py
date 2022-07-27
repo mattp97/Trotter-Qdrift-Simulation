@@ -20,7 +20,7 @@ from skopt import gbrt_minimize
 from skopt.space import Real, Integer
 from skopt.utils import use_named_args
 import cProfile, pstats, io
-from compilers import CompositeSim, TrotterSim, QDriftSim, DensityMatrixSim, profile, conditional_decorator
+from compilers import CompositeSim, TrotterSim, QDriftSim, LRsim, DensityMatrixSim, profile, conditional_decorator
 
 MC_SAMPLES_DEFAULT = 10
 COST_LOOP_DEPTH = 30
@@ -554,7 +554,7 @@ def hamiltonian_localizer_1d(local_hamiltonian, sub_block_size, sub_blocks = 1):
     ix = 0
     while ix < len(terms): 
         if not set(indices[ix]).isdisjoint(arange(start, stop)) == True: #Y region
-            y_terms.append(-1 * terms[ix])
+            y_terms.append(terms[ix].conj().T)
             y_index.append(indices[ix])
 
         if not set(indices[ix]).isdisjoint(arange(start, len(terms))) == True: #B region
@@ -569,11 +569,104 @@ def hamiltonian_localizer_1d(local_hamiltonian, sub_block_size, sub_blocks = 1):
         raise Exception("poor block choice, one of the blocks is empty")
     return (a_terms, y_terms, b_terms)
 
-def lieb_robinson_sim(localized_hamiltonian, in_trotter_order, partition):
-    for i in localized_hamiltonian:
-        block_sim = CompositeSim(i, inner_order=in_trotter_order)
-        partition_sim(simulator=block_sim, partition_type = partition) #idea to generate each as a sim an keep track of the current state and total gate count
-    return None
+def local_partition(simulator, partition, weights = None): #weights is a list with ordering A, Y, B
+        if partition == "chop":
+            local_chop(simulator, weights)
+            
+        if partition == "optimal_chop":
+            optimal_local_chop(simulator)
+        else:
+            raise Exception("this is not a valid partition")
+
+        return 0
+
+def local_chop(simulator, weights):
+    if type(simulator) != LRsim: raise TypeError("only works on LRsims")
+    for i in range(len(simulator.spectral_norms)):
+        a_temp = []
+        b_temp = []
+        for j in range(len(simulator.spectral_norms[i])):
+            if simulator.spectral_norms[i][j] >= weights[i]:
+                a_temp.append(simulator.spectral_norms[i][j])
+            else:
+                b_temp.append(simulator.spectral_norms[i][j])
+            
+        simulator.internal_sims[i].set_partition(a_temp, b_temp)
+    return 0
+
+def optimal_local_chop(simulator):
+    if type(simulator) != LRsim: raise TypeError("only works on LRsims")
+
+    return 0
+
+def exact_cost(simulator, time, epsilon): #relies on the use of density matrices
+    if type(simulator) == (CompositeSim): 
+        if simulator.partition == "qdrift":
+            get_trace_dist = lambda x : sim_trace_distance(time, nb = x, iterations=1)
+        elif simulator.partition == 'trotter':
+            get_trace_dist = lambda x : sim_trace_distance(time, nb = 1, iterations=x)
+        else: 
+            get_trace_dist = lambda x : sim_trace_distance(time, nb = self.nb, iterations=x)
+    if type(simulator) == LRsim:
+        get_trace_dist = lambda x: sim_trace_distance(time, nb, iterations=x)
+    else: raise TypeError("only works on LR and Composite Sims")
+        
+    lower_bound = 1
+    upper_bound = 2
+    trace_dist = get_trace_dist(lower_bound)
+    if trace_dist < epsilon:
+        print("[sim_channel_performance] Iterations too large, already below error threshold")
+        return simulator.gate_count
+    # Iterate up until some max cutoff
+    break_flag = False
+    for n in range(27):
+        trace_dist = get_trace_dist(upper_bound) 
+        if trace_dist < epsilon:
+            break_flag = True
+            break
+        else:
+            upper_bound *= 2
+            #print(trace_dist, self.gate_count)
+    if break_flag == False:
+        raise Exception("[sim_channel_performance] maximum number of iterations hit, something is probably off")
+    #print("the upper bound is " + str(upper_bound))
+
+    if (upper_bound == 2):
+        return simulator.gate_count
+    #Binary search
+    break_flag_2 = False
+    while lower_bound < upper_bound:
+        mid = lower_bound + (upper_bound - lower_bound)//2
+        if (mid == 2) or (mid ==1): 
+            return simulator.gate_count #catching another edge case
+        if (get_trace_dist(mid +1) < epsilon) and (get_trace_dist(mid-1) > epsilon): #Causing Problems
+            break_flag_2 = True
+            break #calling the critical point the point where the second point on either side goes from a bad point to a good point (we are in the neighbourhood of the ideal gate count)
+        elif get_trace_dist(mid) < epsilon:
+            upper_bound = mid - 1
+        else:
+            lower_bound = mid + 1
+    if break_flag_2 == False:
+        print("[sim_channel_performance] function did not find a good point")
+
+    get_trace_dist(mid)
+    return simulator.gate_count
+
+def sim_trace_distance(simulator, time, iterations, nb):
+    if type(simulator) == TrotterSim:
+        return trace_distance(simulator.simulate(time, iterations), exact_time_evolution(simulator.hamiltonian_list, 
+                            time, simulator.initial_state))
+    else: #TODO incorporate samples into this framework
+        return trace_distance(simulator.simulate(time, iterations), exact_time_evolution(simulator.hamiltonian_list, 
+                            time, simulator.initial_state))
+
+    
+
+def set_local_nb(simulator, nb_list):
+    if type(simulator) != LRsim: raise TypeError("only works on LRsims")
+    for i in simulator.internal_sims:
+        simulator.internal_sims[i].nb = nb_list[i]
+
 
 def test():
     hamiltonian = graph_hamiltonian(2, 1, 1)

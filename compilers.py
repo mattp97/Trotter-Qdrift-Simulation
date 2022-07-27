@@ -2,6 +2,7 @@ from ast import And
 from asyncore import loop
 from mimetypes import init
 from operator import matmul
+from matplotlib import use
 import numpy as np
 import matplotlib.pyplot as plt
 import statistics
@@ -397,15 +398,12 @@ class CompositeSim:
                 rng_seed = 1,
                 nb = 1,
                 state_rand = False,
-                use_density_matrices = False,
-                lr_hamiltonian = None
+                use_density_matrices = False
                 ):
         self.trotter_operators = []
         self.trotter_norms = []
         self.qdrift_operators = []
         self.qdrift_norms = []
-        
-        self.lr_hamiltonian = lr_hamiltonian #contains a tuple of the form (A, Y, B) where each are Hamiltonian lists of the original form
 
         self.hilbert_dim = hamiltonian_list[0].shape[0] 
         self.rng_seed = rng_seed
@@ -443,11 +441,6 @@ class CompositeSim:
 
         # if nb_optimizer == True:
         #     print("Nb is equal to " + str(self.nb))
-
-        if lr_hamiltonian != None:
-            for i in lr_hamiltonian:
-                pass #here we would normalize each term and make lists of norms and matrices for simulate 
-            #how would partitioning work in this framework?
 
     def get_hamiltonian_list(self):
         ret = []
@@ -511,7 +504,7 @@ class CompositeSim:
         # TODO check clear and then set
         if len(qdrift_list) > 0:
             self.qdrift_sim.set_hamiltonian(norm_list=self.qdrift_norms, mat_list=self.qdrift_operators)
-        elif len(trotter_list) == 0:
+        elif len(qdrift_list) == 0:
             self.qdrift_sim.clear_hamiltonian()
 
         if len(trotter_list) > 0:
@@ -650,7 +643,6 @@ class DensityMatrixSim:
             qdrift_norms.append(norm)
         self.qdrift_sim.set_hamiltonian(qdrift_terms, qdrift_norms)
         self.trotter_sim.set_hamiltonian(trott_terms, trott_norms) 
-
 
     def reset_init_state(self):
         self.initial_state = np.zeros((self.hilbert_dim, self.hilbert_dim))
@@ -978,23 +970,6 @@ class DensityMatrixSim:
         get_trace_dist(mid)
         return self.gate_count
 
-        #Compute some surrounding points and interpolate
-        #good_dist = []
-        #bad_dist = []
-        #for i in range (mid+1, mid +3):
-        #    trace_dist = get_trace_dist(i)
-        #    good_dist.append([self.gate_count, float(trace_dist)])
-        #for j in range (max(mid-2, 1), mid +1): #catching an edge case
-        #    trace_dist = get_trace_dist(j)
-        #    bad_dist.append([self.gate_count, float(trace_dist)])
-        #Store the points to interpolate
-        #good_dist = np.array(good_dist)
-        #bad_dist = np.array(bad_dist)
-        #self.gate_data = np.concatenate((bad_dist, good_dist), 0)
-        #print(self.gate_data)
-        #fit = np.poly1d(np.polyfit(self.gate_data[:,1], self.gate_data[:,0], 1)) #linear best fit 
-        #return fit(self.epsilon)
-
 class LRsim: 
     def __init__(
         self,
@@ -1002,18 +977,29 @@ class LRsim:
         local_hamiltonian, #a tuple of lists of H terms: each index of the tuple contains a list representing a local block
         inner_order,
         partition,
-        nb
+        nb = [], #should be a list in this case
+        state_rand = True,
+        rng_seed = 1
     ):
         self.gate_count = 0
+        self.hamiltonian_list = hamiltonian_list
         self.local_hamiltonian = local_hamiltonian
         self.inner_order = inner_order
         self.spectral_norms = [] # a list of lists of the spectral norms of each local bracket
         self.partition = partition 
-        
-        self.qdrift_sim = QDriftSim(use_density_matrices=True)
-        self.trotter_sim = TrotterSim(order = inner_order, use_density_matrices=True)
+        self.state_rand = state_rand
+        self.hilbert_dim = hamiltonian_list[0].shape[0] 
+        self.rng_seed = rng_seed
 
+        self.comp_sim_A = CompositeSim(inner_order=1, outer_order=1, use_density_matrices=True)
+        self.comp_sim_Y = CompositeSim(inner_order=1, outer_order=1, use_density_matrices=True)
+        self.comp_sim_B = CompositeSim(inner_order=1, outer_order=1, use_density_matrices=True)
+
+        self.internal_sims = [self.comp_sim_A, self.comp_sim_Y, self.comp_sim_B]
+
+        np.random.seed(self.rng_seed)
         self.nb = nb
+        if type(self.nb) != type(list): raise TypeError("nb is a list that requires input for each local block")
 
         for i in range(len(self.local_hamiltonian)):
             temp = []
@@ -1031,13 +1017,28 @@ class LRsim:
             self.initial_state[0] = 1.
         
         self.initial_state = np.outer(self.initial_state, self.initial_state.conj())
-        self.trotter_sim.set_initial_state(self.initial_state)
-        self.qdrift_sim.set_initial_state(self.initial_state)
+        self.comp_sim_A.set_initial_state(self.initial_state)
+        self.comp_sim_Y.set_initial_state(self.initial_state)
+        self.comp_sim_B.set_initial_state(self.initial_state)
         self.final_state = np.copy(self.initial_state)
 
 
+    def simulate(self, time, iterations):
+        current_state = np.copy(self.initial_state)
+        for i in range(iterations):
+            self.comp_sim_A.set_initial_state(current_state)
+            current_state = self.comp_sim_A.simulate(time/iterations, 1)
+            self.gate_count += self.comp_sim_A.gate_count
 
-    def simulate(self):
+            self.comp_sim_Y.set_initial_state(current_state)
+            current_state = self.comp_sim_Y.simulate(time/iterations, 1)
+            self.gate_count += self.comp_sim_A.gate_count
+
+            self.comp_sim_B.set_initial_state(current_state)
+            current_state = self.comp_sim_B.simulate(time/iterations, 1)
+            self.gate_count += self.comp_sim_A.gate_count
+
+        self.final_state = current_state
         return np.copy(self.final_state)
-
-
+        
+    
