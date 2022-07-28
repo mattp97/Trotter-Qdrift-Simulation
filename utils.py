@@ -569,15 +569,13 @@ def hamiltonian_localizer_1d(local_hamiltonian, sub_block_size, sub_blocks = 1):
         raise Exception("poor block choice, one of the blocks is empty")
     return (a_terms, y_terms, b_terms)
 
-def local_partition(simulator, partition, weights = None): #weights is a list with ordering A, Y, B
+def local_partition(simulator, partition, weights = None, time = 0.01, epsilon = 0.001): #weights is a list with ordering A, Y, B
         if partition == "chop":
             local_chop(simulator, weights)
-            
         if partition == "optimal_chop":
-            optimal_local_chop(simulator)
+            optimal_local_chop(simulator, time, epsilon)
         else:
             raise Exception("this is not a valid partition")
-
         return 0
 
 def local_chop(simulator, weights):
@@ -594,21 +592,43 @@ def local_chop(simulator, weights):
         simulator.internal_sims[i].set_partition(a_temp, b_temp)
     return 0
 
-def optimal_local_chop(simulator):
+def optimal_local_chop(simulator, time, epsilon): ### needs exact cost function to be operational
     if type(simulator) != LRsim: raise TypeError("only works on LRsims")
+    w_guess = [] 
+    nb_guess = []
+    dimensions = []
+    dim1 = []
+    dim2 = []
+    for i in range(len(simulator.spectral_norms)):
+        w_guess.append(statistics.median(simulator.spectral_norms[i]))
+        nb_guess.append(int(len(simulator.spectral_norms[i])))
+
+        dim1.append(Real(name = "weight_"+str(i), low=0, high = max(simulator.spectral_norms)))
+        dim2.append(Integer(name="nb_"+str(i), low=1, high = len(simulator.spectral_norms * 10)))
+
+    guess_points = [w_guess, nb_guess]
+    dimensions = [dim1, dim2]
+
+    @use_named_args(dimensions=dimensions)
+    def obj_func():
+        local_chop(simulator, )
+        return exact_cost(simulator, time, epsilon)
+    
+    gbrt_minimize(func=obj_func,dimensions=dimensions, n_calls=20, n_initial_points = 5, 
+                random_state=4, verbose = False, acq_func = "LCB", x0 = guess_points)
 
     return 0
 
 def exact_cost(simulator, time, epsilon): #relies on the use of density matrices
     if type(simulator) == (CompositeSim): 
         if simulator.partition == "qdrift":
-            get_trace_dist = lambda x : sim_trace_distance(time, nb = x, iterations=1)
+            get_trace_dist = lambda x : sim_trace_distance(time, iterations=1, nb = x)
         elif simulator.partition == 'trotter':
-            get_trace_dist = lambda x : sim_trace_distance(time, nb = 1, iterations=x)
+            get_trace_dist = lambda x : sim_trace_distance(time, iterations=x, nb = 1)
         else: 
-            get_trace_dist = lambda x : sim_trace_distance(time, nb = self.nb, iterations=x)
+            get_trace_dist = lambda x : sim_trace_distance(time, iterations=x, nb = simulator.nb)
     if type(simulator) == LRsim:
-        get_trace_dist = lambda x: sim_trace_distance(time, nb, iterations=x)
+        get_trace_dist = lambda x: sim_trace_distance(time, iterations=x, nb = simulator.nb)
     else: raise TypeError("only works on LR and Composite Sims")
         
     lower_bound = 1
@@ -656,12 +676,17 @@ def sim_trace_distance(simulator, time, iterations, nb):
     if type(simulator) == TrotterSim:
         return trace_distance(simulator.simulate(time, iterations), exact_time_evolution(simulator.hamiltonian_list, 
                             time, simulator.initial_state))
-    else: #TODO incorporate samples into this framework
+
+    elif type(simulator) == LRsim:
+        if type(nb) != list: raise TypeError("local sims require an nb value per site")
+        set_local_nb(simulator, nb)
         return trace_distance(simulator.simulate(time, iterations), exact_time_evolution(simulator.hamiltonian_list, 
                             time, simulator.initial_state))
 
-    
-
+    else: #TODO incorporate samples into this framework -- just call composite sim and set the partition and nb :)
+        return trace_distance(simulator.simulate(time, iterations), exact_time_evolution(simulator.hamiltonian_list, 
+                            time, simulator.initial_state))
+ 
 def set_local_nb(simulator, nb_list):
     if type(simulator) != LRsim: raise TypeError("only works on LRsims")
     for i in simulator.internal_sims:
