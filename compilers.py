@@ -389,7 +389,8 @@ class CompositeSim:
                 rng_seed = 1,
                 nb = 1,
                 state_rand = False,
-                use_density_matrices = False
+                use_density_matrices = False,
+                verbose = False
                 ):
         self.trotter_operators = []
         self.trotter_norms = []
