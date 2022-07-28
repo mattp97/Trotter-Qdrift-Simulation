@@ -71,12 +71,6 @@ class Experiment:
             if self.verbose:
                 print("[Experiment.run] evaluating partition type:", partition)
             outputs = []
-            print("partitioning before any time loops")
-            self.sim.print_partition()
-            partition_sim(self.sim, partition_type=partition)
-            print("#" * 75)
-            print("partition after partitioning")
-            self.sim.print_partition()
             heuristic = -1
             for t in results["times"]:
                 if self.verbose:
@@ -124,11 +118,6 @@ class Experiment:
         self.test_type            = settings["test_type"]
         # Drop self.output_directory? if we can find the settings then just output there
 
-def test_qdrift():
-    graph_ham = graph_hamiltonian(4, 2, 1) 
-    e = Experiment(graph_ham, t_start=1e-5, t_stop=1e-2, t_steps=20, verbose=True, experiment_label="testing class performance")
-    e.run()
-    e.pickle_results()
 
 def find_pickles():
     if len(sys.argv) == 3:
@@ -150,6 +139,60 @@ def find_pickles():
         settings_path = None
     return ham_path, settings_path, scratch_path
     
+def setup_manage_hamiltonians(base_dir):
+    if os.path.exists(base_dir + "hamiltonians"):
+        print("[setup] found existing hamiltonians directory")
+    else:
+        os.mkdir(base_dir + "hamiltonians")
+        print("[setup] created hamiltonian directory at: ", base_dir + "hamiltonians")
+    hamiltonian_base = base_dir + "hamiltonians/"
+    hamiltonians = [f for f in os.listdir(hamiltonian_base) if os.path.isfile(hamiltonian_base + f)]
+    print("[setup] found the following hamiltonian files")
+    print(hamiltonians)
+    user_input = input('[setup] which hamiltonian would you like to use? ')
+    return user_input
+
+# RETURNS : path to the final configured settings file. 
+def setup_manage_settings(base_dir):
+    if os.path.exists(base_dir + "settings"):
+        print("[setup] found existing settings directory")
+    else:
+        os.mkdir(base_dir + "settings")
+        print("[setup] created settings directory at: ", base_dir + "settings")
+    settings_base = base_dir + "settings/"
+    settings_files = [f for f in os.listdir(settings_base) if os.path.isfile(settings_base + f)]
+    print("[setup] found the following settings files")
+    print(settings_files)
+    settings_file = input("[setup] which would you like to use? Enter a new file name to create a new settings file.")
+    settings_path = base_dir + "settings/" + settings_file
+    if os.path.exists(settings_path):
+        settings = pickle.load(open(settings_path, 'rb'))
+    else:
+        settings = {}
+        need_to_set = ["experiment_label", "verbose", 'use_density_matrices','t_start', 't_stop', 't_steps', 'partitions', 'infidelity_threshold']
+        need_to_set += ['num_state_samples', 'output_directory', 'test_type']
+        print("[setup] Make sure the followings keys are set: ", need_to_set)
+        
+    print("[setup] These are the currently existing settings:")
+    print(settings)
+    print("[setup] you can modify a setting by writing \'setting=value\' after the \'>\' prompt. Only use one = sign. Enter q to quit.")
+    for _ in range(10 * len(settings)):
+        user_input = input("> ")
+        try:
+            key, val = user_input.split("=")
+            settings[key] = val
+        except:
+            if user_input == "q".split("="):
+                print("[setup] configuration completed. final settings:")
+                print(settings)
+                break
+            else:
+                print("[setup] incorrect input. format is \'key=val\'. Only use one = sign.")
+    save_to_new = input("[setup] Enter the filename you'd like to save to. WARNING - can overwrite existing settings: ")
+    pickle.dump(settings, open(base_dir + "settings/" + save_to_new))
+    print("[setup] settings completed.")
+    return base_dir + "settings/" + save_to_new
+
 def setup_entry_point():
     if len(sys.argv) == 3:
         output_dir = sys.argv[-1]
@@ -161,6 +204,9 @@ def setup_entry_point():
         output_dir = scratch_path
     if output_dir[-1] != '/':
         output_dir += '/'
+    print("[setup] base directory: ", output_dir)
+    setup_file_path = setup_manage_hamiltonians(output_dir)
+    hamiltonian_file_path = setup_manage_settings(output_dir)
     ham_list = graph_hamiltonian(4,2,1)
     shape = ham_list[0].shape
     pickle_ham = [mat.tolist() for mat in ham_list]
