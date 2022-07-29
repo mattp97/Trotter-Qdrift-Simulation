@@ -46,22 +46,6 @@ class Experiment:
             self.output_directory = output_directory
         self.experiment_label = experiment_label
     
-    def pickle_hamiltonian(self, input_path):
-        ham_list = self.sim.get_hamiltonian_list()
-        shape = ham_list[0].shape
-        # convert to pickle'able datatype
-        to_pickle = [mat.tolist() for mat in ham_list]
-        to_pickle.append(shape)
-        pickle(to_pickle, open(input_path, 'wb'))
-    
-    def load_hamiltonian(self, output_path):
-        unpickled = pickle.load(open(output_path, 'rb'))
-        output_shape = unpickled[-1]
-        ham_list = []
-        for ix in range(len(unpickled) - 1):
-            ham_list.append(np.array(unpickled[ix]).reshape(output_shape))
-        self.sim.set_hamiltonian(ham_list)
-        print("unpickled this many terms", len(ham_list))
     
     # TODO: implement multithreading?
     # TODO: How to handle probabilistic partitionings?
@@ -119,6 +103,21 @@ class Experiment:
         self.test_type            = settings["test_type"]
         # Drop self.output_directory? if we can find the settings then just output there
 
+def pickle_hamiltonian(output_path, unparsed_ham_list):
+    shape = unparsed_ham_list[0].shape
+    # convert to pickle'able datatype
+    to_pickle = [mat.tolist() for mat in unparsed_ham_list]
+    to_pickle.append(shape)
+    pickle.dump(to_pickle, open(output_path, 'wb'))
+
+def load_hamiltonian(input_path):
+    unpickled = pickle.load(open(input_path, 'rb'))
+    output_shape = unpickled[-1]
+    ham_list = []
+    for ix in range(len(unpickled) - 1):
+        ham_list.append(np.array(unpickled[ix]).reshape(output_shape))
+    print("[load_hamiltonian] loaded this many terms: ", len(ham_list))
+    return ham_list
 
 def find_launchpad():
     if len(sys.argv) == 3:
@@ -272,6 +271,22 @@ def analyze_entry_point():
             plt.plot(times, v, label=k)
     plt.show()
 
+def hamiltonian_entry_point():
+    if len(sys.argv) == 3:
+        ham_path = sys.argv[2]
+    else:
+        print("[hamiltonian_entry_point] No hamiltonian store path provided. quitting.")
+        sys.exit()
+    graph_path = ham_path + "/graph_4_2_1.pickle"
+    if os.path.exists(graph_path):
+        print("[hamiltonian_entry_point] graph_4_2_1.pickle exists")
+        sys.exit()
+    else:
+        print("[hamiltonian_entry_point] no file found, using this as file path: ", graph_path)
+    ham_list = graph_hamiltonian(4,2,1)
+    pickle_hamiltonian(graph_path, ham_list)
+
+
 if __name__ == "__main__":
     if sys.argv[1] == "setup":
         setup_entry_point()
@@ -279,3 +294,5 @@ if __name__ == "__main__":
         compute_entry_point()
     if sys.argv[1] == "analyze":
         analyze_entry_point()
+    if sys.argv[1] == "hamiltonian":
+        hamiltonian_entry_point()
