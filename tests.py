@@ -6,12 +6,14 @@ import numpy as np
 
 import pickle
 import os
+import shutil
 import matplotlib.pyplot as plt
 
 INFIDELITY_TEST_TYPE = "infidelity"
 TRACE_DIST_TEST_TYPE = "trace_distance"
 GATE_COST_TEST_TYPE = "gate_cost"
 CROSSOVER_TEST_TYPE = "crossover"
+LAUNCHPAD = "launchpad"
 
 
 # For coordinating runs. 
@@ -119,25 +121,28 @@ class Experiment:
         # Drop self.output_directory? if we can find the settings then just output there
 
 
-def find_pickles():
+def find_launchpad():
     if len(sys.argv) == 3:
-        scratch_path = sys.argv[-1]
+        launchpad = sys.argv[-1]
     else:
         scratch_path = os.getenv("SCRATCH")
         if type(scratch_path) != type("string"):
-            print("[find_pickle] Error, could not find SCRATCH environment variable")
+            print("[find_launchpad] Error, could not find SCRATCH environment variable and no launchpad provided")
             return None, None, None
-    if scratch_path[-1] != '/':
-        scratch_path += '/'
-    if os.path.exists(scratch_path + 'hamiltonian.pickle'):
-        ham_path = scratch_path + 'hamiltonian.pickle'
+        if scratch_path[-1] != '/':
+            scratch_path += '/'
+        launchpad = scratch_path + LAUNCHPATH
+    if launchpad[-1] != '/':
+        launchpad += '/'
+    if os.path.exists(launchpad + 'hamiltonian.pickle'):
+        ham_path = launchpad + 'hamiltonian.pickle'
     else:
         ham_path = None
-    if os.path.exists(scratch_path + 'settings.pickle'):
-        settings_path = scratch_path + 'settings.pickle'
+    if os.path.exists(launchpad + 'settings.pickle'):
+        settings_path = launchpad + 'settings.pickle'
     else:
         settings_path = None
-    return ham_path, settings_path, scratch_path
+    return ham_path, settings_path, launchpad
     
 def setup_manage_hamiltonians(base_dir):
     if os.path.exists(base_dir + "hamiltonians"):
@@ -149,7 +154,7 @@ def setup_manage_hamiltonians(base_dir):
     hamiltonians = [f for f in os.listdir(hamiltonian_base) if os.path.isfile(hamiltonian_base + f)]
     print("[setup] found the following hamiltonian files")
     print(hamiltonians)
-    user_input = input('[setup] which hamiltonian would you like to use? ')
+    user_input = input('[setup] which hamiltonian would you like to use? (Do not type \'.pickle\' extension): ')
     return user_input
 
 # RETURNS : path to the final configured settings file. 
@@ -163,35 +168,52 @@ def setup_manage_settings(base_dir):
     settings_files = [f for f in os.listdir(settings_base) if os.path.isfile(settings_base + f)]
     print("[setup] found the following settings files")
     print(settings_files)
-    settings_file = input("[setup] which would you like to use? Enter a new file name to create a new settings file.")
-    settings_path = base_dir + "settings/" + settings_file
-    if os.path.exists(settings_path):
-        settings = pickle.load(open(settings_path, 'rb'))
-    else:
-        settings = {}
-        need_to_set = ["experiment_label", "verbose", 'use_density_matrices','t_start', 't_stop', 't_steps', 'partitions', 'infidelity_threshold']
-        need_to_set += ['num_state_samples', 'output_directory', 'test_type']
-        print("[setup] Make sure the followings keys are set: ", need_to_set)
-        
+    settings_file = input("[setup] enter a settings name to start modifying (do not type \'.pickle\' extension) or leave empty for new: ")
+    use_new_settings = (settings_file == "")
+    settings = {}
+    if use_new_settings == False:
+        settings_path = base_dir + "settings/" + settings_file
+        if os.path.exists(settings_path):
+            loaded_settings = pickle.load(open(settings_path, 'rb'))
+            settings.update(loaded_settings)
+        else:
+            print("[setup] could not find specified settings file: " + settings_path + " so using empty")
+
     print("[setup] These are the currently existing settings:")
     print(settings)
+
+    need_to_set = ["experiment_label", "verbose", 'use_density_matrices','t_start', 't_stop', 't_steps', 'partitions', 'infidelity_threshold']
+    need_to_set += ['num_state_samples', 'output_directory', 'test_type']
+    print("[setup] Make sure the followings keys are set: ", need_to_set)
+        
     print("[setup] you can modify a setting by writing \'setting=value\' after the \'>\' prompt. Only use one = sign. Enter q to quit.")
-    for _ in range(10 * len(settings)):
+    for _ in range(100):
         user_input = input("> ")
+        if user_input == "q":
+            # TODO: Need to check that each required setting has been set.
+            print("[setup] configuration completed. final settings:")
+            print(settings)
+            break
         try:
             key, val = user_input.split("=")
             settings[key] = val
         except:
-            if user_input == "q".split("="):
-                print("[setup] configuration completed. final settings:")
-                print(settings)
-                break
-            else:
-                print("[setup] incorrect input. format is \'key=val\'. Only use one = sign.")
+            print("[setup] incorrect input. format is \'key=val\'. Only use one = sign.")
     save_to_new = input("[setup] Enter the filename you'd like to save to. WARNING - can overwrite existing settings: ")
     pickle.dump(settings, open(base_dir + "settings/" + save_to_new))
     print("[setup] settings completed.")
     return base_dir + "settings/" + save_to_new
+
+def prep_launchpad(base_dir, settings_path, hamiltonian_path):
+    if base_dir[-1] != "/":
+        base_dir += '/'
+    launchpad = base_dir + LAUNCHPAD
+    if os.path.exists(launchpad) == False:
+        os.mkdir(launchpad)
+    shutil.copyfile(settings_path, launchpad + "/settings.pickle")
+    shutil.copyfile(hamiltonian_path, launchpad + "/hamiltonian.pickle")
+    if os.path.exists(launchpad + "/settings.pickle") and os.path.exists(launchpad + "/hamiltonian.pickle"):
+        return True
 
 def setup_entry_point():
     if len(sys.argv) == 3:
@@ -205,44 +227,45 @@ def setup_entry_point():
     if output_dir[-1] != '/':
         output_dir += '/'
     print("[setup] base directory: ", output_dir)
-    setup_file_path = setup_manage_hamiltonians(output_dir)
+    settings_file_path = setup_manage_hamiltonians(output_dir)
     hamiltonian_file_path = setup_manage_settings(output_dir)
-    ham_list = graph_hamiltonian(4,2,1)
-    shape = ham_list[0].shape
-    pickle_ham = [mat.tolist() for mat in ham_list]
-    pickle_ham.append(shape)
-    experiment_label = input("label for the experiment (string): ")
-    verbose = input("verbose (True/False): ")
-    use_density_matrices = input("use_density_matrices (True/False): ")
-    t_start = input("t_start (float): ")
-    t_stop = input("t_stop (float): ")
-    t_steps = input("t_steps (positive int): ")
-    num_partitions = input("number of partitions: ")
-    partitions = []
-    for i in range(int(num_partitions)):
-        partitions.append(input("enter partition type #" + str(i + 1) +" : "))
-    infidelity_threshold = input("infidelity threshold (float): ")
-    num_state_samples = input("num_state_samples (positive int): ")
-    output_directory = input("output_dir (string): ")
-    test_type = input("test_type (string): ")
-    settings ={}
-    settings["experiment_label"] = experiment_label
-    settings["verbose"] = bool(verbose)
-    settings["use_density_matrices"] = bool(use_density_matrices)
-    settings["t_start"] = float(t_start)
-    settings["t_stop"] = float(t_stop)
-    settings["t_steps"] = int(t_steps)
-    settings["partitions"] = partitions
-    settings["infidelity_threshold"] = float(infidelity_threshold)
-    settings["num_state_samples"] = int(num_state_samples)
-    settings["output_directory"] = output_directory
-    settings["test_type"] = test_type
-    pickle.dump(settings, open(output_dir + "settings.pickle", 'wb'))
-    pickle.dump(pickle_ham, open(output_dir + "hamiltonian.pickle", 'wb'))
+    prep_launchpad(output_dir, settings_file_path, hamiltonian_file_path)
+    # ham_list = graph_hamiltonian(4,2,1)
+    # shape = ham_list[0].shape
+    # pickle_ham = [mat.tolist() for mat in ham_list]
+    # pickle_ham.append(shape)
+    # experiment_label = input("label for the experiment (string): ")
+    # verbose = input("verbose (True/False): ")
+    # use_density_matrices = input("use_density_matrices (True/False): ")
+    # t_start = input("t_start (float): ")
+    # t_stop = input("t_stop (float): ")
+    # t_steps = input("t_steps (positive int): ")
+    # num_partitions = input("number of partitions: ")
+    # partitions = []
+    # for i in range(int(num_partitions)):
+        # partitions.append(input("enter partition type #" + str(i + 1) +" : "))
+    # infidelity_threshold = input("infidelity threshold (float): ")
+    # num_state_samples = input("num_state_samples (positive int): ")
+    # output_directory = input("output_dir (string): ")
+    # test_type = input("test_type (string): ")
+    # settings ={}
+    # settings["experiment_label"] = experiment_label
+    # settings["verbose"] = bool(verbose)
+    # settings["use_density_matrices"] = bool(use_density_matrices)
+    # settings["t_start"] = float(t_start)
+    # settings["t_stop"] = float(t_stop)
+    # settings["t_steps"] = int(t_steps)
+    # settings["partitions"] = partitions
+    # settings["infidelity_threshold"] = float(infidelity_threshold)
+    # settings["num_state_samples"] = int(num_state_samples)
+    # settings["output_directory"] = output_directory
+    # settings["test_type"] = test_type
+    # pickle.dump(settings, open(output_dir + "settings.pickle", 'wb'))
+    # pickle.dump(pickle_ham, open(output_dir + "hamiltonian.pickle", 'wb'))
 
 def compute_entry_point():
-    ham_path, settings_path, scratch_dir = find_pickles()
-    if type(ham_path) != type("string") or type(settings_path) != type("string") or type(scratch_dir) != type("string"):
+    ham_path, settings_path, launchpad = find_launchpad()
+    if type(ham_path) != type("string") or type(settings_path) != type("string") or type(launchpad) != type("string"):
         print("[tests.py] Error: could not find hamiltonian.pickle or settings.pickle")
         sys.exit()
     ham_list = pickle.load(open(ham_path, 'rb'))
@@ -251,7 +274,7 @@ def compute_entry_point():
     print("#" * 50)
     print("settings found:")
     print(settings)
-    working_dir = scratch_dir + 'output'
+    working_dir = launchpad + 'output'
     if os.path.exists(working_dir) == False:
         os.mkdir(working_dir)
     exp = Experiment(output_directory=working_dir)
