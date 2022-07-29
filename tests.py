@@ -15,7 +15,6 @@ GATE_COST_TEST_TYPE = "gate_cost"
 CROSSOVER_TEST_TYPE = "crossover"
 LAUNCHPAD = "launchpad"
 
-
 # For coordinating runs. 
 class Experiment:
     def __init__(
@@ -144,6 +143,7 @@ def find_launchpad():
         settings_path = None
     return ham_path, settings_path, launchpad
     
+# RETURNS : path to selected hamiltonian.pickle file
 def setup_manage_hamiltonians(base_dir):
     if os.path.exists(base_dir + "hamiltonians"):
         print("[setup] found existing hamiltonians directory")
@@ -236,38 +236,6 @@ def setup_entry_point():
     hamiltonian_file_path = setup_manage_hamiltonians(output_dir)
     settings_file_path = setup_manage_settings(output_dir)
     prep_launchpad(output_dir, settings_file_path, hamiltonian_file_path)
-    # ham_list = graph_hamiltonian(4,2,1)
-    # shape = ham_list[0].shape
-    # pickle_ham = [mat.tolist() for mat in ham_list]
-    # pickle_ham.append(shape)
-    # experiment_label = input("label for the experiment (string): ")
-    # verbose = input("verbose (True/False): ")
-    # use_density_matrices = input("use_density_matrices (True/False): ")
-    # t_start = input("t_start (float): ")
-    # t_stop = input("t_stop (float): ")
-    # t_steps = input("t_steps (positive int): ")
-    # num_partitions = input("number of partitions: ")
-    # partitions = []
-    # for i in range(int(num_partitions)):
-        # partitions.append(input("enter partition type #" + str(i + 1) +" : "))
-    # infidelity_threshold = input("infidelity threshold (float): ")
-    # num_state_samples = input("num_state_samples (positive int): ")
-    # output_directory = input("output_dir (string): ")
-    # test_type = input("test_type (string): ")
-    # settings ={}
-    # settings["experiment_label"] = experiment_label
-    # settings["verbose"] = bool(verbose)
-    # settings["use_density_matrices"] = bool(use_density_matrices)
-    # settings["t_start"] = float(t_start)
-    # settings["t_stop"] = float(t_stop)
-    # settings["t_steps"] = int(t_steps)
-    # settings["partitions"] = partitions
-    # settings["infidelity_threshold"] = float(infidelity_threshold)
-    # settings["num_state_samples"] = int(num_state_samples)
-    # settings["output_directory"] = output_directory
-    # settings["test_type"] = test_type
-    # pickle.dump(settings, open(output_dir + "settings.pickle", 'wb'))
-    # pickle.dump(pickle_ham, open(output_dir + "hamiltonian.pickle", 'wb'))
 
 def compute_entry_point():
     ham_path, settings_path, launchpad = find_launchpad()
@@ -304,7 +272,6 @@ def analyze_entry_point():
             plt.plot(times, v, label=k)
     plt.show()
 
-
 if __name__ == "__main__":
     if sys.argv[1] == "setup":
         setup_entry_point()
@@ -312,6 +279,3 @@ if __name__ == "__main__":
         compute_entry_point()
     if sys.argv[1] == "analyze":
         analyze_entry_point()
-    
-
-    
