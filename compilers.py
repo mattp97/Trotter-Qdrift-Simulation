@@ -461,12 +461,15 @@ class CompositeSim:
         self.qdrift_sim.reset_init_state()
 
     def randomize_initial_state(self):
-        rng_ix = np.random.randint(0, self.hilbert_dim)
-        init = np.zeros((self.hilbert_dim, 1))
-        init[rng_ix] = 1.
-        if self.use_density_matrices == True:
-            init = np.outer(init, init.conj())
-        self.set_initial_state(init)
+        if self.hilbert_dim == 0:
+            self.set_initial_state(np.zeros((1,1)))
+        elif self.hilbert_dim >= 1:
+            rng_ix = np.random.randint(0, self.hilbert_dim)
+            init = np.zeros((self.hilbert_dim, 1))
+            init[rng_ix] = 1.
+            if self.use_density_matrices == True:
+                init = np.outer(init, init.conj())
+            self.set_initial_state(init)
     
     def set_trotter_order(self, inner_order, outer_order=1):
         self.inner_order = inner_order

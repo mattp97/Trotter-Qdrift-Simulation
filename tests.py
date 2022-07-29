@@ -93,15 +93,24 @@ class Experiment:
     # TODO: Replace dictionary access with get and defaults
     def load_settings(self, settings_path):
         settings = pickle.load(open(settings_path, 'rb'))
-        self.experiment_label     = settings['experiment_label']
-        self.verbose              = settings["verbose"]
-        self.use_density_matrices = settings["use_density_matrices"]
-        self.times                = np.geomspace(settings["t_start"], settings["t_stop"], settings["t_steps"])
-        self.partitions           = settings["partitions"]
-        self.infidelity_threshold = settings["infidelity_threshold"]
-        self.num_state_samples    = settings["num_state_samples"]
-        self.test_type            = settings["test_type"]
+        self.experiment_label     = settings.get('experiment_label', "default_experiment_label")
+        self.verbose              = settings.get("verbose", True)
+        self.use_density_matrices = settings.get("use_density_matrices", False)
+        self.times                = np.geomspace(settings.get("t_start", 1e-4), settings.get("t_stop", 1e-2), settings.get("t_steps", 10))
+        self.partitions           = settings.get("partitions", ["first_order_trotter", "qdrift"])
+        self.infidelity_threshold = settings.get("infidelity_threshold", 0.05)
+        self.num_state_samples    = settings.get("num_state_samples", 5)
+        self.test_type            = settings.get("test_type", GATE_COST_TEST_TYPE)
         # Drop self.output_directory? if we can find the settings then just output there
+
+    def load_hamiltonian(self, input_path):
+        unpickled = pickle.load(open(input_path, 'rb'))
+        output_shape = unpickled[-1]
+        ham_list = []
+        for ix in range(len(unpickled) - 1):
+            ham_list.append(np.array(unpickled[ix]).reshape(output_shape))
+        print("[load_hamiltonian] loaded this many terms: ", len(ham_list))
+        self.sim.set_hamiltonian(ham_list)
 
 def pickle_hamiltonian(output_path, unparsed_ham_list):
     shape = unparsed_ham_list[0].shape
@@ -110,28 +119,21 @@ def pickle_hamiltonian(output_path, unparsed_ham_list):
     to_pickle.append(shape)
     pickle.dump(to_pickle, open(output_path, 'wb'))
 
-def load_hamiltonian(input_path):
-    unpickled = pickle.load(open(input_path, 'rb'))
-    output_shape = unpickled[-1]
-    ham_list = []
-    for ix in range(len(unpickled) - 1):
-        ham_list.append(np.array(unpickled[ix]).reshape(output_shape))
-    print("[load_hamiltonian] loaded this many terms: ", len(ham_list))
-    return ham_list
 
 def find_launchpad():
     if len(sys.argv) == 3:
-        launchpad = sys.argv[-1]
+        base_dir = sys.argv[-1]
+        if base_dir[-1] != '/':
+            base_dir += '/'
     else:
         scratch_path = os.getenv("SCRATCH")
         if type(scratch_path) != type("string"):
-            print("[find_launchpad] Error, could not find SCRATCH environment variable and no launchpad provided")
+            print("[find_launchpad] Error, could not find SCRATCH environment variable and no base directory provided")
             return None, None, None
         if scratch_path[-1] != '/':
             scratch_path += '/'
-        launchpad = scratch_path + LAUNCHPATH
-    if launchpad[-1] != '/':
-        launchpad += '/'
+        base_dir = scratch_path
+    launchpad = base_dir + LAUNCHPAD + '/'
     if os.path.exists(launchpad + 'hamiltonian.pickle'):
         ham_path = launchpad + 'hamiltonian.pickle'
     else:
@@ -258,11 +260,15 @@ def compute_entry_point():
 # Analyze the results from the results.pickle file of a previous run
 def analyze_entry_point():
     if len(sys.argv) == 3:
-        results_path = sys.argv[-1]
+        base_dir = sys.argv[-1]
     else:
         print("[analyze_entry_point] No results.pickle file path provided. quitting.")
         sys.exit()
-    results = pickle.load(open(results_path, 'rb'))
+    try:
+        results = pickle.load(open(base_dir + '/' + LAUNCHPAD + '/output/results.pickle', 'rb'))
+    except:
+        print("[analyze_entry_point] no results were found at: ", base_dir + '/' + LAUNCHPAD + '/output/results.pickle')
+        sys.exit()
     print("results:")
     print(results)
     times = results["times"]
