@@ -155,7 +155,7 @@ def setup_manage_hamiltonians(base_dir):
     print("[setup] found the following hamiltonian files")
     print(hamiltonians)
     user_input = input('[setup] which hamiltonian would you like to use? (Do not type \'.pickle\' extension): ')
-    return user_input
+    return hamiltonian_base + user_input + '.pickle'
 
 # RETURNS : path to the final configured settings file. 
 def setup_manage_settings(base_dir):
@@ -169,6 +169,7 @@ def setup_manage_settings(base_dir):
     print("[setup] found the following settings files")
     print(settings_files)
     settings_file = input("[setup] enter a settings name to start modifying (do not type \'.pickle\' extension) or leave empty for new: ")
+    settings_file += '.pickle'
     use_new_settings = (settings_file == "")
     settings = {}
     if use_new_settings == False:
@@ -199,10 +200,10 @@ def setup_manage_settings(base_dir):
             settings[key] = val
         except:
             print("[setup] incorrect input. format is \'key=val\'. Only use one = sign.")
-    save_to_new = input("[setup] Enter the filename you'd like to save to. WARNING - can overwrite existing settings: ")
-    pickle.dump(settings, open(base_dir + "settings/" + save_to_new))
+    save_to_new = input("[setup] Enter the filename you'd like to save to. WARNING - can overwrite existing settings, do not write \'.pickle\': ")
+    pickle.dump(settings, open(base_dir + "settings/" + save_to_new + '.pickle', 'wb'))
     print("[setup] settings completed.")
-    return base_dir + "settings/" + save_to_new
+    return base_dir + "settings/" + save_to_new + '.pickle'
 
 def prep_launchpad(base_dir, settings_path, hamiltonian_path):
     if base_dir[-1] != "/":
@@ -210,8 +211,13 @@ def prep_launchpad(base_dir, settings_path, hamiltonian_path):
     launchpad = base_dir + LAUNCHPAD
     if os.path.exists(launchpad) == False:
         os.mkdir(launchpad)
+    print("[prep_launchpad] settings_path:", settings_path)
+    print("[prep_launchpad] launchpad:", launchpad)
     shutil.copyfile(settings_path, launchpad + "/settings.pickle")
-    shutil.copyfile(hamiltonian_path, launchpad + "/hamiltonian.pickle")
+    try:
+        shutil.copyfile(hamiltonian_path, launchpad + "/hamiltonian.pickle")
+    except:
+        print("[prep_launchpad] Could not copy hamiltonian.")
     if os.path.exists(launchpad + "/settings.pickle") and os.path.exists(launchpad + "/hamiltonian.pickle"):
         return True
 
@@ -227,8 +233,8 @@ def setup_entry_point():
     if output_dir[-1] != '/':
         output_dir += '/'
     print("[setup] base directory: ", output_dir)
-    settings_file_path = setup_manage_hamiltonians(output_dir)
-    hamiltonian_file_path = setup_manage_settings(output_dir)
+    hamiltonian_file_path = setup_manage_hamiltonians(output_dir)
+    settings_file_path = setup_manage_settings(output_dir)
     prep_launchpad(output_dir, settings_file_path, hamiltonian_file_path)
     # ham_list = graph_hamiltonian(4,2,1)
     # shape = ham_list[0].shape
