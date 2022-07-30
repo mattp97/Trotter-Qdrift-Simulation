@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 import sys
 
 from utils import *
@@ -14,6 +15,18 @@ TRACE_DIST_TEST_TYPE = "trace_distance"
 GATE_COST_TEST_TYPE = "gate_cost"
 CROSSOVER_TEST_TYPE = "crossover"
 LAUNCHPAD = "launchpad"
+MINIMAL_SETTINGS = ["experiment_label",
+                    "verbose",
+                    'use_density_matrices',
+                    't_start',
+                    't_stop',
+                    't_steps',
+                    'partitions',
+                    'infidelity_threshold',
+                    'num_state_samples',
+                    'output_directory',
+                    'test_type'
+]
 
 # For coordinating runs. 
 class Experiment:
@@ -158,7 +171,55 @@ def setup_manage_hamiltonians(base_dir):
     user_input = input('[setup] which hamiltonian would you like to use? (Do not type \'.pickle\' extension): ')
     return hamiltonian_base + user_input + '.pickle'
 
+# Assumes an input dictionary mapping strings of inputs to strings of values. converts them to proper data types for pickling.
+def process_settings_to_save(unprocessed_settings):
+    ret = {}
+    for setting in MINIMAL_SETTINGS:
+        if setting == "experiment_label":
+            val = unprocessed_settings.get(setting, "default label")
+        if setting == "verbose":
+            val = unprocessed_settings.get(setting, "True")
+            ret[setting] = bool(val)
+        if setting == 'use_density_matrices':
+            val = unprocessed_settings.get(setting, "False")
+            ret[setting] = bool(val)
+        if setting == 't_start':
+            val = unprocessed_settings.get(setting, "1e-4")
+            ret[setting] = float(val)
+        if setting == 't_stop':
+            val = unprocessed_settings.get(setting, "1e-2")
+            ret[setting] = float(val)
+        if setting == 't_steps':
+            val = unprocessed_settings.get(setting, "10")
+            ret[setting] = int(val)
+        if setting == 'partitions':
+            val = unprocessed_settings.get(setting, ["first_order_trotter", "qdrift"])
+            if type(val) == type([]):
+                all_items_strings = True
+                for v in val:
+                    if type(v) != type("string"):
+                        all_items_strings = False
+                if all_items_strings == False:
+                    print("[process_settings] found partition list with non string types. using default.") 
+                    val = ["first_order_trotter", "qdrift"]
+                ret[setting] = val
+        if setting == 'infidelity_threshold':
+            val = unprocessed_settings.get(setting, "0.05")
+            ret[setting] = float(val)
+        if setting == 'num_state_samples':
+            val = unprocessed_settings.get(setting, "5")
+            ret[setting] = int(val)
+        if setting == 'output_directory':
+            val = unprocessed_settings.get(setting, ".")
+            ret[setting] = val
+        if setting == 'test_type':
+            val = unprocessed_settings.get(setting, "gate_cost")
+            ret[setting] = val
+    return ret
+
+
 # RETURNS : path to the final configured settings file. 
+# GUARANTEES THAT EACH PICKLED SETTINGS FILE HAS MINIMUM SETTINGS WITH SANE DEFAULTS. 
 def setup_manage_settings(base_dir):
     if os.path.exists(base_dir + "settings"):
         print("[setup] found existing settings directory")
@@ -193,18 +254,37 @@ def setup_manage_settings(base_dir):
         user_input = input("> ")
         if user_input == "q":
             # TODO: Need to check that each required setting has been set.
-            print("[setup] configuration completed. final settings:")
-            print(settings)
             break
-        try:
-            key, val = user_input.split("=")
-            settings[key] = val
-        except:
-            print("[setup] incorrect input. format is \'key=val\'. Only use one = sign.")
-    save_to_new = input("[setup] Enter the filename you'd like to save to. WARNING - can overwrite existing settings, do not write \'.pickle\': ")
-    pickle.dump(settings, open(base_dir + "settings/" + save_to_new + '.pickle', 'wb'))
+        if user_input == "partitions":
+            print("How many partitions?")
+            num_partitions = int(input("> "))
+            partitions = []
+            for i in range(num_partitions):
+                p = input("enter partition number " + str(i + 1) + " > ")
+                partitions.append(p)
+            settings["partitions"] = partitions
+        else:
+            try:
+                key, val = user_input.split("=")
+                settings[key] = val
+            except:
+                print("[setup] incorrect input. format is \'key=val\'. Only use one = sign.")
+    processed_settings = process_settings_to_save(settings)
+    print("[setup] configuration completed. final settings:")
+    print(processed_settings)
+    save_to_new = input("[setup] Enter the filename (without \'.pickle\' extension) you'd like to save to (empty keeps name and rewrites). WARNING - can overwrite existing settings: ")
+    if save_to_new == "":
+        print("[setup] overwriting existing file: ", settings_file)
+        save_file = base_dir + "settings/" + settings_file
+    else:
+        save_file = base_dir + "settings/" + save_to_new + ".pickle"
+        print("[setup] saving to:", save_file)
+    try:
+        pickle.dump(processed_settings, open(save_file, 'wb'))
+    except:
+        print("[setup] error while pickling.")
     print("[setup] settings completed.")
-    return base_dir + "settings/" + save_to_new + '.pickle'
+    return save_file
 
 def prep_launchpad(base_dir, settings_path, hamiltonian_path):
     if base_dir[-1] != "/":
