@@ -59,34 +59,65 @@ class Experiment:
         self.experiment_label = experiment_label
     
     
-    # TODO: implement multithreading?
-    # TODO: How to handle probabilistic partitionings?
-    def run(self):
+    def run_gate_cost(self):
         results = {}
-        results["times"] = np.copy(self.times).tolist()
         for partition in self.partitions:
             if self.verbose:
-                print("[Experiment.run] evaluating partition type:", partition)
+                print("[run_gate_cost] evaluating partition:", partition)
             outputs = []
-            heuristic = -1
+            heuristic = 1
             partition_sim(self.sim, partition)
-            for t in results["times"]:
+            for t in self.times:
                 if self.verbose:
-                    print("[Experiment.run] evaluating time:", t)
+                    print("[run_gate_cost] evaluating time:", t)
                 out = 0
                 for _ in range(self.num_state_samples):
                     self.sim.randomize_initial_state()
-                    if self.test_type == "infidelity":
-                        inf_temp, _ = single_infidelity_sample(self.sim, t)
-                        out += inf_temp
-                    elif self.test_type == "gate_cost":
-                        cost, iters = find_optimal_cost(self.sim, t, self.infidelity_threshold, heuristic=heuristic, verbose=self.verbose)
-                        heuristic = iters
-                        out += cost
+                    cost, iters = find_optimal_cost(self.sim, t, self.infidelity_threshold, heuristic=heuristic, verbose=self.verbose)
+                    heuristic = iters
+                    out += cost
                 outputs.append(out / self.num_state_samples)
             results[partition] = outputs
-        self.results = results
-        pickle.dump(self.results, open(self.output_directory + "results.pickle", 'wb'))
+        return results
+    
+    def run_infidelity(self):
+        results = {}
+        for partition in self.partitions:
+            if self.verbose:
+                print("[run_gate_cost] evaluating partition:", partition)
+            outputs = []
+            heuristic = 1
+            partition_sim(self.sim, partition)
+            for t in self.times:
+                if self.verbose:
+                    print("[run_gate_cost] evaluating time:", t)
+                out = 0
+                for _ in range(self.num_state_samples):
+                    self.sim.randomize_initial_state()
+                    inf_temp, _ = single_infidelity_sample(self.sim, t)
+                    out += inf_temp
+                outputs.append(out / self.num_state_samples)
+            results[partition] = outputs
+        return results
+
+    # TODO: implement multithreading?
+    # TODO: How to handle probabilistic partitionings?
+    def run(self):
+        final_results = {}
+        final_results["times"] = np.copy(self.times).tolist()
+        if self.test_type == INFIDELITY_TEST_TYPE:
+            out = self.run_infidelity()
+        elif self.test_type == GATE_COST_TEST_TYPE:
+            out = self.run_gate_cost()
+        final_results.extend(out)
+        self.results = final_results
+        try:
+            pickle.dump(final_results, open(self.output_directory + "results.pickle", 'wb'))
+            print("[Experiment.run] successfully wrote output.")
+        except:
+            print("[Experiment.run] ERROR: could not save output to:", self.output_directory + 'results.pickle')
+
+
 
     # TODO: This isn't really necessary anymore with the setup scripts
     def pickle_settings(self, output_path):
