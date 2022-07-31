@@ -88,6 +88,7 @@ class Experiment:
         self.results = results
         pickle.dump(self.results, open(self.output_directory + "results.pickle", 'wb'))
 
+    # TODO: This isn't really necessary anymore with the setup scripts
     def pickle_settings(self, output_path):
         settings = {}
         settings["experiment_label"] = self.experiment_label
@@ -103,7 +104,8 @@ class Experiment:
         settings["test_type"] = self.test_type
         pickle.dump(settings, open(output_path, 'wb'))
 
-    # TODO: Replace dictionary access with get and defaults
+    # given an exact absoulute path to a settings file, loads them into the experiment object. Note that we ensure defaults and formatting
+    # are handled on write, so loading should not have to use these defaults but do this out of precaution. 
     def load_settings(self, settings_path):
         settings = pickle.load(open(settings_path, 'rb'))
         self.experiment_label     = settings.get('experiment_label', "default_experiment_label")
@@ -116,6 +118,8 @@ class Experiment:
         self.test_type            = settings.get("test_type", GATE_COST_TEST_TYPE)
         # Drop self.output_directory? if we can find the settings then just output there
 
+    # Inputs:
+    # - An absoluate path to a pickled hamiltonian file. converts to numpy array and makes sure simulator is loaded with that hamiltonian.
     def load_hamiltonian(self, input_path):
         unpickled = pickle.load(open(input_path, 'rb'))
         output_shape = unpickled[-1]
@@ -146,14 +150,3 @@ def hamiltonian_entry_point():
         print("[hamiltonian_entry_point] no file found, using this as file path: ", graph_path)
     ham_list = graph_hamiltonian(4,2,1)
     pickle_hamiltonian(graph_path, ham_list)
-
-
-if __name__ == "__main__":
-    if sys.argv[1] == "setup":
-        setup_entry_point()
-    if sys.argv[1] == "compute":
-        compute_entry_point()
-    if sys.argv[1] == "analyze":
-        analyze_entry_point()
-    if sys.argv[1] == "hamiltonian":
-        hamiltonian_entry_point()
