@@ -20,11 +20,11 @@ from skopt import gbrt_minimize
 from skopt.space import Real, Integer
 from skopt.utils import use_named_args
 import cProfile, pstats, io
-from compilers import CompositeSim, TrotterSim, QDriftSim, LRsim, DensityMatrixSim, profile, conditional_decorator
+from compilers import CompositeSim, TrotterSim, QDriftSim, LRsim, profile, conditional_decorator
 
 MC_SAMPLES_DEFAULT = 10
 COST_LOOP_DEPTH = 30
-ITERATION_UPPER_BOUND_MAX = 20 # specifies power of 2 for maximum number of iterations to search through
+ITERATION_BOUNDS_LOOP_DEPTH = 100 # specifies power of 2 for maximum number of iterations to search through
 
 # A simple function that computes the graph distance between two sites
 def dist(site1, site2):
@@ -128,7 +128,6 @@ def single_infidelity_sample(simulator, time, iterations = 1, nbsamples = 1):
 # @profile
 def multi_infidelity_sample(simulator, time, iterations=1, nbsamples=1, mc_samples=MC_SAMPLES_DEFAULT):
     ret = []
-    simulator.print_partition()
     # No need to sample TrotterSim, just return single element list
     if type(simulator) == TrotterSim:
         ret.append(single_infidelity_sample(simulator, time, iterations=iterations, nbsamples=nbsamples))
@@ -164,7 +163,7 @@ def exact_time_evolution(hamiltonian_list, time, initial_state):
 # returns - The first value it finds that satisfies the upper/lower bound invariant
 def get_iteration_bound(infidelity_fn, infidelity_bound, iter_bound, is_lower_bound):
     curr_guess = iter_bound
-    for i in range(ITERATION_UPPER_BOUND_MAX):
+    for i in range(COST_LOOP_DEPTH):
         if is_threshold_met(infidelity_fn(curr_guess), infidelity_bound):
             if is_lower_bound:
                 curr_guess = math.ceil(curr_guess / 2)
@@ -177,6 +176,58 @@ def get_iteration_bound(infidelity_fn, infidelity_bound, iter_bound, is_lower_bo
                 curr_guess = int(curr_guess * 2)
     print("[get_iteration_bound] Iteration upper bound exceeded. Proceed with caution.")
     return curr_guess
+
+# Performs exponential backoff to find iteration bounds
+# Inputs
+# - inf_fn: a callable that takes in an iteration and returns a list of infidelities to be fed into is_threshold_met
+# - infidelity_threshold: the threshold needed to be fed into is_threshold_met
+# - heuristic: the guess as to where a good place to start is
+# Returns:
+# (iter_lower, iter_upper)
+def get_iteration_bounds(inf_fn, infidelity_threshold, heuristic):
+    if heuristic < 10:
+        if is_threshold_met(inf_fn(10), infidelity_threshold):
+            return (0, 10)
+        else:
+            iter_lower = 5
+            iter_upper = -1
+    else:
+        if is_threshold_met(inf_fn(heuristic), infidelity_threshold):
+            iter_lower = -1
+            iter_upper = heuristic
+        else:
+            iter_lower = heuristic
+            iter_upper = -1
+    curr_guess = heuristic
+    for i in range(ITERATION_BOUNDS_LOOP_DEPTH):
+        # Search for lower bound
+        if iter_lower <= 0 and iter_upper > 0:
+            step = min(100, math.floor(curr_guess / 2.0))
+            new_guess = int(curr_guess - step)
+            if is_threshold_met(inf_fn(new_guess), infidelity_threshold):
+                # lower bound requires the threshold to NOT be met
+                curr_guess = new_guess
+            else:
+                # threshold was NOT met so we have found our iter_lower
+                iter_lower = new_guess
+
+        # Search for upper bound
+        elif iter_lower > 0 and iter_upper <= 0:
+            step = min(100, math.ceil(curr_guess * 2))
+            new_guess = int(curr_guess + step)
+            if is_threshold_met(inf_fn(new_guess), infidelity_threshold):
+                # upper bound needs to meet threshold so we are good
+                iter_upper = new_guess
+            else:
+                curr_guess = new_guess
+        elif iter_lower >= 1 and iter_upper >= 1:
+            return (iter_lower, iter_upper)
+        elif iter_lower <= 0 and iter_upper <= 0:
+            print("[get_iteration_bounds] found both bounds <= 0, resetting.")
+            iter_lower = 1
+            iter_upper = -1
+    print("[get_iteration_bounds] Iteration depth reached, unclear what to do.")
+    raise Exception("get_iteration_bounds")
 
 
 # Varies the number of iterations needed for a simulator to acheive its infidelity threshold. WARNING: will modify the input
@@ -197,7 +248,7 @@ def find_optimal_cost(simulator, time, infidelity_threshold, heuristic = -1, mc_
     exact_final_state = exact_time_evolution(hamiltonian_list, time, initial_state=init)
 
     # now we can simplify infidelity to nice lambda, NOTE get_inf_and_cost returns a TUPLE 
-    if type(simulator) == TrotterSim or type(simulator) == CompositeSim:
+    if type(simulator) == TrotterSim or type(simulator) == CompositeSim or type(simulator) == LRSim:
         get_inf_and_cost = lambda x: multi_infidelity_sample(simulator, time, iterations = x, mc_samples=mc_samples)
     elif type(simulator) == QDriftSim:
         get_inf_and_cost = lambda x: multi_infidelity_sample(simulator, time, nbsamples= x, mc_samples=mc_samples)
@@ -211,23 +262,24 @@ def find_optimal_cost(simulator, time, infidelity_threshold, heuristic = -1, mc_
     # If we do not have a heuristic use an exponential backoff to provide bounds.
     # TODO: this is ~kind of~ sloppy, could probably convert the helper function into just "compute_iteration_bounds" and have
     # it handle all of this logic.
-    iter_lower = 1
-    iter_upper = 2 ** 20
-    if heuristic > 0:
-        inf_tup, costs = zip(*get_inf_and_cost(heuristic))
-        if is_threshold_met(list(inf_tup), infidelity_threshold):
-            if heuristic == 1:
-                # This means our heuristic satisfies the threshold and is 1, which is the lowest possible iterations. Return early.
-                return (np.mean(costs), heuristic)
-            iter_upper = heuristic
-            iter_lower = get_iteration_bound(get_inf, infidelity_threshold, heuristic, True)
-        else:
-            iter_upper = get_iteration_bound(get_inf, infidelity_threshold, heuristic, False)
-            iter_lower = heuristic
-    else:
-        iter_upper = get_iteration_bound(get_inf, infidelity_threshold, 1, False)
-        # NOTE: this lower bound should work because get_iteration_bound doubles until it finds an upper so half of this should be a lower.
-        iter_lower = math.floor(iter_upper / 2) 
+    # iter_lower = 1
+    # iter_upper = 2 ** 20
+    # if heuristic > 0:
+        # inf_tup, costs = zip(*get_inf_and_cost(heuristic))
+        # if is_threshold_met(list(inf_tup), infidelity_threshold):
+            # if heuristic == 1:
+                # # This means our heuristic satisfies the threshold and is 1, which is the lowest possible iterations. Return early.
+                # return (np.mean(costs), heuristic)
+            # iter_upper = heuristic
+            # iter_lower = get_iteration_bound(get_inf, infidelity_threshold, heuristic, True)
+        # else:
+            # iter_upper = get_iteration_bound(get_inf, infidelity_threshold, heuristic, False)
+            # iter_lower = heuristic
+    # else:
+        # iter_upper = get_iteration_bound(get_inf, infidelity_threshold, 1, False)
+        # # NOTE: this lower bound should work because get_iteration_bound doubles until it finds an upper so half of this should be a lower.
+        # iter_lower = math.floor(iter_upper / 2) 
+    iter_lower, iter_upper = get_iteration_bounds(get_inf, infidelity_threshold, heuristic)
 
     if verbose:
         print("[find_optimal_cost] found iteration bounds - lower, upper:", iter_lower, ", ", iter_upper)
@@ -253,6 +305,7 @@ def find_optimal_cost(simulator, time, infidelity_threshold, heuristic = -1, mc_
     inf_tup, costs = zip(*ret)
     if verbose:
         print("[find_optimal_cost] computed infidelity avg:", np.mean(list(inf_tup)))
+        print("[find_optimal_cost] iters, cost: ", iter_upper, ", ", np.mean(costs))
     return (np.mean(costs), iter_upper)
 
 # Computes the expected cost of a probabilistic partitioning scheme. 
