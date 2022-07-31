@@ -109,7 +109,7 @@ class Experiment:
             out = self.run_infidelity()
         elif self.test_type == GATE_COST_TEST_TYPE:
             out = self.run_gate_cost()
-        final_results.extend(out)
+        final_results.update(out)
         self.results = final_results
         try:
             pickle.dump(final_results, open(self.output_directory + "results.pickle", 'wb'))

@@ -109,9 +109,9 @@ def exact_time_evolution_density(hamiltonian_list, time, initial_rho):
 # TrotterSim, QDriftSim, CompositeSim
 # Outputs: a single shot estimate of the infidelity according to the exact output provided. 
 # @profile
-def single_infidelity_sample(simulator, time, iterations = 1, nbsamples = 1):
+def single_infidelity_sample(simulator, time, exact_final_state, iterations = 1, nbsamples = 1):
     sim_output = []
-    exact_output = simulator.simulate_exact_output(time)
+    # exact_output = simulator.simulate_exact_output(time)
 
     if type(simulator) == QDriftSim:
         sim_output = simulator.simulate(time, nbsamples)
@@ -122,19 +122,22 @@ def single_infidelity_sample(simulator, time, iterations = 1, nbsamples = 1):
     if type(simulator) == CompositeSim:
         sim_output = simulator.simulate(time, iterations)
 
-    infidelity = 1 - (np.abs(np.dot(exact_output.conj().T, sim_output)).flat[0])**2
+    if type(simulator) == LRsim:
+        sim_output = simulator.simulate(time, iterations)
+
+    infidelity = 1 - (np.abs(np.dot(exact_final_state.conj().T, sim_output)).flat[0])**2
     return (infidelity, simulator.gate_count)
 
 # @profile
-def multi_infidelity_sample(simulator, time, iterations=1, nbsamples=1, mc_samples=MC_SAMPLES_DEFAULT):
+def multi_infidelity_sample(simulator, time, exact_final_state, iterations=1, nbsamples=1, mc_samples=MC_SAMPLES_DEFAULT):
     ret = []
     # No need to sample TrotterSim, just return single element list
     if type(simulator) == TrotterSim:
-        ret.append(single_infidelity_sample(simulator, time, iterations=iterations, nbsamples=nbsamples))
+        ret.append(single_infidelity_sample(simulator, time, exact_final_state, iterations=iterations, nbsamples=nbsamples))
         ret *= mc_samples
     else:
         for samp in range(mc_samples):
-            ret.append(single_infidelity_sample(simulator, time, iterations=iterations, nbsamples=nbsamples))
+            ret.append(single_infidelity_sample(simulator, time, exact_final_state, iterations=iterations, nbsamples=nbsamples))
 
     return ret
 
@@ -202,7 +205,8 @@ def get_iteration_bounds(inf_fn, infidelity_threshold, heuristic):
     for i in range(ITERATION_BOUNDS_LOOP_DEPTH):
         # Search for lower bound
         if iter_lower <= 0 and iter_upper > 0:
-            step = min(100, math.floor(curr_guess / 2.0))
+            # step = min(100, math.floor(curr_guess / 2.0))
+            step = math.floor(curr_guess / 2.0)
             new_guess = int(curr_guess - step)
             if is_threshold_met(inf_fn(new_guess), infidelity_threshold):
                 # lower bound requires the threshold to NOT be met
@@ -213,7 +217,8 @@ def get_iteration_bounds(inf_fn, infidelity_threshold, heuristic):
 
         # Search for upper bound
         elif iter_lower > 0 and iter_upper <= 0:
-            step = min(100, math.ceil(curr_guess * 2))
+            # step = min(100, math.ceil(curr_guess * 2))
+            step = math.ceil(curr_guess * 2)
             new_guess = int(curr_guess + step)
             if is_threshold_met(inf_fn(new_guess), infidelity_threshold):
                 # upper bound needs to meet threshold so we are good
@@ -241,44 +246,18 @@ def get_iteration_bounds(inf_fn, infidelity_threshold, heuristic):
 def find_optimal_cost(simulator, time, infidelity_threshold, heuristic = -1, mc_samples=MC_SAMPLES_DEFAULT, verbose=False):
     hamiltonian_list = simulator.get_hamiltonian_list()
     
-    # choose random basis state to start out with
-    init = 0 * simulator.initial_state
-    init[np.random.randint(0, len(init))] = 1.
-    simulator.set_initial_state(init)
-    exact_final_state = exact_time_evolution(hamiltonian_list, time, initial_state=init)
+    exact_final_state = simulator.simulate_exact_output(time)
 
     # now we can simplify infidelity to nice lambda, NOTE get_inf_and_cost returns a TUPLE 
-    if type(simulator) == TrotterSim or type(simulator) == CompositeSim or type(simulator) == LRSim:
-        get_inf_and_cost = lambda x: multi_infidelity_sample(simulator, time, iterations = x, mc_samples=mc_samples)
+    if type(simulator) == TrotterSim or type(simulator) == CompositeSim or type(simulator) == LRsim:
+        get_inf_and_cost = lambda x: multi_infidelity_sample(simulator, time, exact_final_state, iterations = x, mc_samples=mc_samples)
     elif type(simulator) == QDriftSim:
-        get_inf_and_cost = lambda x: multi_infidelity_sample(simulator, time, nbsamples= x, mc_samples=mc_samples)
+        get_inf_and_cost = lambda x: multi_infidelity_sample(simulator, time, exact_final_state, nbsamples= x, mc_samples=mc_samples)
     
     def get_inf(x):
         inf_tup, _ = zip(*get_inf_and_cost(x))
         return list(inf_tup)
     
-    # Branch if we have a heuristic for where the optimal iterations might be. If we do then we need to see if it currently
-    # gives an uppper or lower bound, then use a 20% deviation from the heuristic for the corresponding opposite bound.
-    # If we do not have a heuristic use an exponential backoff to provide bounds.
-    # TODO: this is ~kind of~ sloppy, could probably convert the helper function into just "compute_iteration_bounds" and have
-    # it handle all of this logic.
-    # iter_lower = 1
-    # iter_upper = 2 ** 20
-    # if heuristic > 0:
-        # inf_tup, costs = zip(*get_inf_and_cost(heuristic))
-        # if is_threshold_met(list(inf_tup), infidelity_threshold):
-            # if heuristic == 1:
-                # # This means our heuristic satisfies the threshold and is 1, which is the lowest possible iterations. Return early.
-                # return (np.mean(costs), heuristic)
-            # iter_upper = heuristic
-            # iter_lower = get_iteration_bound(get_inf, infidelity_threshold, heuristic, True)
-        # else:
-            # iter_upper = get_iteration_bound(get_inf, infidelity_threshold, heuristic, False)
-            # iter_lower = heuristic
-    # else:
-        # iter_upper = get_iteration_bound(get_inf, infidelity_threshold, 1, False)
-        # # NOTE: this lower bound should work because get_iteration_bound doubles until it finds an upper so half of this should be a lower.
-        # iter_lower = math.floor(iter_upper / 2) 
     iter_lower, iter_upper = get_iteration_bounds(get_inf, infidelity_threshold, heuristic)
 
     if verbose:

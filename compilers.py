@@ -336,6 +336,9 @@ class QDriftSim:
         return final_state
 
     def construct_density(self, time, samples):
+        if self.use_density_matrices == False:
+            print("[QDSim.construct_density] You're trying to construct a density matrix with vector initial state. try again")
+            return np.copy(self.initial_state)
         self.gate_count = 0
         lamb = np.sum(self.spectral_norms)
         tau = time * lamb / (samples * 1.0)
