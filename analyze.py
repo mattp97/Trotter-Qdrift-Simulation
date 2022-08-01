@@ -42,10 +42,11 @@ def analyze_entry_point():
     print("results:")
     print(results)
     times = results["times"]
-    for k,v in results.items():
-        if k != "times":
-            plt.plot(times, v, label=k)
-    plt.show()
+    if results.get("test_type", "") != CROSSOVER_TEST_TYPE:
+        for k,v in results.items():
+            if k != "times":
+                plt.plot(times, v, label=k)
+        plt.show()
 
 if __name__ == "__main__":
     analyze_entry_point()

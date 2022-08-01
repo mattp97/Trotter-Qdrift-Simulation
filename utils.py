@@ -25,6 +25,7 @@ from compilers import CompositeSim, TrotterSim, QDriftSim, LRsim, profile, condi
 MC_SAMPLES_DEFAULT = 10
 COST_LOOP_DEPTH = 30
 ITERATION_BOUNDS_LOOP_DEPTH = 100 # specifies power of 2 for maximum number of iterations to search through
+CROSSOVER_CUTOFF_PERCENTAGE = 0.01
 
 # A simple function that computes the graph distance between two sites
 def dist(site1, site2):
@@ -187,7 +188,7 @@ def get_iteration_bound(infidelity_fn, infidelity_bound, iter_bound, is_lower_bo
 # - heuristic: the guess as to where a good place to start is
 # Returns:
 # (iter_lower, iter_upper)
-def get_iteration_bounds(inf_fn, infidelity_threshold, heuristic):
+def get_iteration_bounds(inf_fn, infidelity_threshold, heuristic, verbose=False):
     if heuristic < 10:
         if is_threshold_met(inf_fn(10), infidelity_threshold):
             return (0, 10)
@@ -201,12 +202,16 @@ def get_iteration_bounds(inf_fn, infidelity_threshold, heuristic):
         else:
             iter_lower = heuristic
             iter_upper = -1
-    curr_guess = heuristic
+    curr_guess = max(iter_lower, iter_upper)
+    if verbose:
+        print("[get_iteration_bounds] Beginning search with iter_lower, iter_upper, curr_guess:", iter_lower, ", ", iter_upper, ", ", curr_guess)
     for i in range(ITERATION_BOUNDS_LOOP_DEPTH):
+        if verbose:
+            print("[get_iteration_bounds] iteration: ", i, ", current guess: ", curr_guess)
         # Search for lower bound
         if iter_lower <= 0 and iter_upper > 0:
             # step = min(100, math.floor(curr_guess / 2.0))
-            step = math.floor(curr_guess / 2.0)
+            step = int(curr_guess)
             new_guess = int(curr_guess - step)
             if is_threshold_met(inf_fn(new_guess), infidelity_threshold):
                 # lower bound requires the threshold to NOT be met
@@ -218,7 +223,7 @@ def get_iteration_bounds(inf_fn, infidelity_threshold, heuristic):
         # Search for upper bound
         elif iter_lower > 0 and iter_upper <= 0:
             # step = min(100, math.ceil(curr_guess * 2))
-            step = math.ceil(curr_guess * 2)
+            step = math.ceil(curr_guess)
             new_guess = int(curr_guess + step)
             if is_threshold_met(inf_fn(new_guess), infidelity_threshold):
                 # upper bound needs to meet threshold so we are good
@@ -245,9 +250,13 @@ def get_iteration_bounds(inf_fn, infidelity_threshold, heuristic):
 # Returns (cost, iterations) - a tuple consisting of the gate cost and number of iterations needed to satisfy is_threshold_met 
 def find_optimal_cost(simulator, time, infidelity_threshold, heuristic = -1, mc_samples=MC_SAMPLES_DEFAULT, verbose=False):
     hamiltonian_list = simulator.get_hamiltonian_list()
-    
     exact_final_state = simulator.simulate_exact_output(time)
 
+    if verbose:
+        print("*" * 75)
+        print("[find_optimal_cost] computing cost for simulator with partitioning:")
+        simulator.print_partition()
+        print("[find_optimal_cost] time, infidelity_threshold: ", time, infidelity_threshold)
     # now we can simplify infidelity to nice lambda, NOTE get_inf_and_cost returns a TUPLE 
     if type(simulator) == TrotterSim or type(simulator) == CompositeSim or type(simulator) == LRsim:
         get_inf_and_cost = lambda x: multi_infidelity_sample(simulator, time, exact_final_state, iterations = x, mc_samples=mc_samples)
@@ -258,7 +267,7 @@ def find_optimal_cost(simulator, time, infidelity_threshold, heuristic = -1, mc_
         inf_tup, _ = zip(*get_inf_and_cost(x))
         return list(inf_tup)
     
-    iter_lower, iter_upper = get_iteration_bounds(get_inf, infidelity_threshold, heuristic)
+    iter_lower, iter_upper = get_iteration_bounds(get_inf, infidelity_threshold, heuristic, verbose=verbose)
 
     if verbose:
         print("[find_optimal_cost] found iteration bounds - lower, upper:", iter_lower, ", ", iter_upper)
@@ -271,6 +280,9 @@ def find_optimal_cost(simulator, time, infidelity_threshold, heuristic = -1, mc_
         mid = (iter_upper + iter_lower) / 2.0
         iters = math.ceil(mid)
         
+        if verbose:
+            print("[find_optimal_cost] searching midpoint: ", mid)
+
         inf_tup, costs = zip(*get_inf_and_cost(iters))
         infidelities = list(inf_tup)
         # upper bounds always satisfy the threshold. 
@@ -286,6 +298,75 @@ def find_optimal_cost(simulator, time, infidelity_threshold, heuristic = -1, mc_
         print("[find_optimal_cost] computed infidelity avg:", np.mean(list(inf_tup)))
         print("[find_optimal_cost] iters, cost: ", iter_upper, ", ", np.mean(costs))
     return (np.mean(costs), iter_upper)
+
+def crossover_criteria_met(cost1, cost2):
+    diff = np.abs(cost1 - cost2)
+    avg = np.mean([cost1, cost2])
+    if diff / avg < CROSSOVER_CUTOFF_PERCENTAGE:
+        return True
+    else:
+        return False
+
+# Computes the time where the cost between partitions is less than 1% of their difference.
+# Inputs:
+# simulator - a Composite sim to be partitioned
+# partition1 - first partition to evaluate
+# partition2 - second partition to evaluate
+# time_left - left endpoint for search
+# time_right - right endpoint for search
+def find_crossover_time(simulator, partition1, partition2, time_left, time_right, inf_thresh=0.05, verbose=False):
+    partition_sim(simulator, partition_type=partition1)
+    cost_left_1, _ = find_optimal_cost(simulator, time_left, inf_thresh, verbose=verbose)
+    cost_right_1, _ = find_optimal_cost(simulator, time_right, inf_thresh, verbose=verbose)
+    partition_sim(simulator, partition_type=partition2)
+    cost_left_2, _ = find_optimal_cost(simulator, time_left, inf_thresh, verbose=verbose)
+    cost_right_2, _ = find_optimal_cost(simulator, time_right, inf_thresh, verbose=verbose)
+
+    # Tells us if we start on the lower times with partition1 being cheaper than partition2
+    start_with_1 = cost_left_1 < cost_left_2
+    # Check that they actually cross
+    if start_with_1 and (cost_right_1 < cost_right_2):
+        print("[find_crossover_time] Partitions do not actually cross!")
+        return -1.
+    elif (start_with_1 == False) and (cost_right_2 < cost_right_1):
+        print("[find_crossover_time] Partitions do not actually cross!")
+        return -1.
+    
+    # Check if either endpoints cross
+    if crossover_criteria_met(cost_left_1, cost_left_2):
+        return time_left
+    if crossover_criteria_met(cost_right_1, cost_right_2):
+        return time_right
+    
+    # Bisection search
+    t_lower = time_left
+    t_upper = time_right
+    t_mid = np.mean([t_lower, t_upper])
+    if verbose:
+        print("[find_crossover_time] beginning search with:")
+        print("t_lower = ", t_upper)
+        print("t_upper = ", t_upper)
+        print("t_mid = ", t_mid)
+        print("start_with_1 = ", start_with_1)
+    for _ in range(COST_LOOP_DEPTH):
+        print("[find_crossover_time] evaluating midpoint: ", t_mid)
+        t_mid = np.mean([t_upper, t_lower])
+        partition_sim(simulator, partition_type=partition1)
+        c1, _ = find_optimal_cost(simulator, t_mid, inf_thresh, verbose=verbose)
+        partition_sim(simulator, partition_type=partition2)
+        c2, _ = find_optimal_cost(simulator, t_mid, inf_thresh, verbose=verbose)
+        if crossover_criteria_met(c1, c2):
+            return t_mid
+        if start_with_1 and (c1 < c2):
+            t_lower = t_mid
+        elif start_with_1 and (c2 < c1):
+            t_upper = t_mid
+        elif (start_with_1 == False) and (c1 < c2):
+            t_upper = t_mid
+        elif (start_with_1 == False) and (c2 < c1):
+            t_lower = t_mid
+    print("[find_crossover_time] Could not find acceptable crossover within loop bounds. Returning best guess")
+    return t_mid
 
 # Computes the expected cost of a probabilistic partitioning scheme. 
 def expected_cost(simulator, partition_probs, time, infidelity_threshold, heuristic = -1, num_samples = MC_SAMPLES_DEFAULT):

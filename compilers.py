@@ -493,6 +493,9 @@ class CompositeSim:
     #         qdrift_list - same but these terms go into the qdrift simulator. 
     # Note: each of these matrices should NOT be normalized, all normalization should be done internally
     def set_partition(self, trotter_list, qdrift_list):
+        self.gate_count = 0
+        self.trotter_sim.gate_count = 0
+        self.qdrift_sim.gate_count = 0
         self.trotter_norms, self.trotter_operators = [], []
         self.qdrift_norms, self.qdrift_operators = [], []
         

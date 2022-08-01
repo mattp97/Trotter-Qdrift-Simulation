@@ -86,7 +86,6 @@ class Experiment:
             if self.verbose:
                 print("[run_gate_cost] evaluating partition:", partition)
             outputs = []
-            heuristic = 1
             partition_sim(self.sim, partition)
             for t in self.times:
                 if self.verbose:
@@ -100,19 +99,37 @@ class Experiment:
             results[partition] = outputs
         return results
 
+    def run_crossover(self):
+        results = {}
+        if len(self.partitions) < 2:
+            print("[run_crossover] Error: trying to compute crossover with less than two partitions. Bail.")
+            return
+        p1 = self.partitions[0]
+        p2 = self.partitions[1]
+        if len(self.times) < 2:
+            print("[run_crossover] Error: trying to compute crossover without enough endpoints. Bail.")
+            return
+        t1 = self.times[0]
+        t2 = self.times[-1]
+        results["crossover"] = find_crossover_time(self.sim, p1, p2, t1, t2, verbose=self.verbose)
+        return results
+
     # TODO: implement multithreading?
     # TODO: How to handle probabilistic partitionings?
     def run(self):
         final_results = {}
         final_results["times"] = np.copy(self.times).tolist()
+        final_results["test_type"] = self.test_type
         if self.test_type == INFIDELITY_TEST_TYPE:
             out = self.run_infidelity()
         elif self.test_type == GATE_COST_TEST_TYPE:
             out = self.run_gate_cost()
+        elif self.test_type == CROSSOVER_TEST_TYPE:
+            out = self.run_crossover()
         final_results.update(out)
         self.results = final_results
         try:
-            pickle.dump(final_results, open(self.output_directory + "results.pickle", 'wb'))
+            pickle.dump(final_results, open(self.output_directory + self.experiment_label + ".pickle", 'wb'))
             print("[Experiment.run] successfully wrote output.")
         except:
             print("[Experiment.run] ERROR: could not save output to:", self.output_directory + 'results.pickle')
