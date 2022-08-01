@@ -135,6 +135,8 @@ class Experiment:
             except:
                 print("[Experiment.run] no output directory and I couldn't make one. storing in base directory")
                 output_dir = self.base_directory
+        else:
+            output_dir = self.base_directory + "outputs/"
         try:
             pickle.dump(final_results, open(output_dir + self.experiment_label + ".pickle", 'wb'))
             print("[Experiment.run] successfully wrote output.")
