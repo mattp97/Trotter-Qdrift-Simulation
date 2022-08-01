@@ -23,7 +23,7 @@ MINIMAL_SETTINGS = ["experiment_label",
                     'partitions',
                     'infidelity_threshold',
                     'num_state_samples',
-                    'output_directory',
+                    'base_directory',
                     'test_type'
 ]
 
@@ -32,7 +32,7 @@ class Experiment:
     def __init__(
         self,
         hamiltonian_list = [],
-        output_directory="./",
+        base_directory="./",
         experiment_label="default",
         t_start=1e-3,
         t_stop=1e-1,
@@ -52,10 +52,10 @@ class Experiment:
         self.infidelity_threshold = infidelity_threshold
         self.verbose = verbose
         self.num_state_samples = num_state_samples
-        if output_directory[-1] != '/':
-            self.output_directory = output_directory + '/'
+        if base_directory[-1] != '/':
+            self.base_directory = base_directory + '/'
         else:
-            self.output_directory = output_directory
+            self.base_directory = base_directory
         self.experiment_label = experiment_label
     
     
@@ -128,11 +128,18 @@ class Experiment:
             out = self.run_crossover()
         final_results.update(out)
         self.results = final_results
+        if os.path.exists(self.base_directory + "outputs") == False:
+            try:
+                os.mkdir(self.base_directory + "outputs")
+                output_dir = self.base_directory + "outputs/"
+            except:
+                print("[Experiment.run] no output directory and I couldn't make one. storing in base directory")
+                output_dir = self.base_directory
         try:
-            pickle.dump(final_results, open(self.output_directory + self.experiment_label + ".pickle", 'wb'))
+            pickle.dump(final_results, open(output_dir + self.experiment_label + ".pickle", 'wb'))
             print("[Experiment.run] successfully wrote output.")
         except:
-            print("[Experiment.run] ERROR: could not save output to:", self.output_directory + 'results.pickle')
+            print("[Experiment.run] ERROR: could not save output to:", self.base_directory + 'results.pickle')
 
 
 
@@ -148,7 +155,7 @@ class Experiment:
         settings["partitions"] = self.partitions
         settings["infidelity_threshold"] = self.infidelity_threshold
         settings["num_state_samples"] = self.num_state_samples
-        settings["output_directory"] = self.output_directory
+        settings["base_directory"] = self.base_directory
         settings["test_type"] = self.test_type
         pickle.dump(settings, open(output_path, 'wb'))
 

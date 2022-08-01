@@ -28,19 +28,7 @@ MINIMAL_SETTINGS = ["experiment_label",
                     'test_type'
 ]
 
-def find_launchpad():
-    if len(sys.argv) > 1:
-        base_dir = sys.argv[1]
-        if base_dir[-1] != '/':
-            base_dir += '/'
-    else:
-        scratch_path = os.getenv("SCRATCH")
-        if type(scratch_path) != type("string"):
-            print("[find_launchpad] Error, could not find SCRATCH environment variable and no base directory provided")
-            return None, None, None
-        if scratch_path[-1] != '/':
-            scratch_path += '/'
-        base_dir = scratch_path
+def find_launchpad(base_dir):
     launchpad = base_dir + LAUNCHPAD + '/'
     if os.path.exists(launchpad + 'hamiltonian.pickle'):
         ham_path = launchpad + 'hamiltonian.pickle'
@@ -50,23 +38,40 @@ def find_launchpad():
         settings_path = launchpad + 'settings.pickle'
     else:
         settings_path = None
-    return ham_path, settings_path, launchpad
+    return ham_path, settings_path
+
+def get_base_dir():
+    if len(sys.argv) > 1:
+        base = sys.argv[1]
+    else:
+        print("[get_base_dir] No output directory given, using SCRATCH")
+        scratch_path = os.getenv("SCRATCH")
+        if scratch_path == '':
+            print("[get_base_dir] nothing provided and no scratch set. bailing.")
+            sys.exit()
+        base = scratch_path
+    if base[-1] != '/':
+        base += '/'
+    return base
 
 def compute_entry_point():
-    ham_path, settings_path, launchpad = find_launchpad()
-    if type(ham_path) != type("string") or type(settings_path) != type("string") or type(launchpad) != type("string"):
+    base_dir = get_base_dir()
+    ham_path, settings_path = find_launchpad(base_dir)
+    if type(ham_path) != type("string") or type(settings_path) != type("string"):
         print("[tests.py] Error: could not find hamiltonian.pickle or settings.pickle")
         sys.exit()
-    ham_list = pickle.load(open(ham_path, 'rb'))
-    settings = pickle.load(open(settings_path, 'rb'))
-    print("[compute_entry_point] hamiltonian found with this many terms:", len(ham_list))
+    try:
+        ham_list = pickle.load(open(ham_path, 'rb'))
+        settings = pickle.load(open(settings_path, 'rb'))
+    except:
+        print("[compute_entry_point] you fool, we couldn't even unload the hamiltonian or settings")
+        sys.exit()
+    print("[compute_entry_point] hamiltonian ", ham_path, " found with this many terms:", len(ham_list))
     print("#" * 50)
     print("settings found:")
     print(settings)
-    working_dir = launchpad + 'output'
-    if os.path.exists(working_dir) == False:
-        os.mkdir(working_dir)
-    exp = Experiment(output_directory=working_dir)
+
+    exp = Experiment(base_directory=base_dir)
     exp.load_hamiltonian(ham_path)
     exp.load_settings(settings_path)
     exp.run()

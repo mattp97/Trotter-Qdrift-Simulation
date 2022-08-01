@@ -32,12 +32,28 @@ def analyze_entry_point():
     if len(sys.argv) > 1:
         base_dir = sys.argv[1]
     else:
-        print("[analyze_entry_point] No results.pickle file path provided. quitting.")
-        sys.exit()
+        if os.path.exists(os.getenv("SCRATCH")):
+            print("[analyze_entry_point] Using scratch directory")
+            base_dir = os.getenv("SCRATCH")
+        else:
+            print("[analyze_entry_point] No directory given and no scratch path. i give up.")
+            sys.exit()
+    if base_dir[-1] != '/':
+        base_dir += '/'
+    if os.path.exists(base_dir + "outputs"):
+        output_dir = base_dir + 'outputs/'
+    else:
+        output_dir = base_dir
+    print("[analyze_entry_point] Output directory: ", output_dir)
+    print("[analyze_entry_point] possible outputs to load: ")
+    print(os.listdir(output_dir))
+    filename = input("[analyze] which file to use? ")
+    if filename[-len(".pickle"):] != ".pickle":
+        filename += ".pickle"
     try:
-        results = pickle.load(open(base_dir + '/' + LAUNCHPAD + '/output/results.pickle', 'rb'))
+        results = pickle.load(open(output_dir + filename, 'rb'))
     except:
-        print("[analyze_entry_point] no results were found at: ", base_dir + '/' + LAUNCHPAD + '/output/results.pickle')
+        print("[analyze_entry_point] no results were found at: ", output_dir + filename)
         sys.exit()
     print("results:")
     print(results)

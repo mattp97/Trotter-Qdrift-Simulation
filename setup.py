@@ -22,7 +22,7 @@ MINIMAL_SETTINGS = ["experiment_label",
                     'partitions',
                     'infidelity_threshold',
                     'num_state_samples',
-                    'output_directory',
+                    'base_directory',
                     'test_type'
 ]
 
@@ -94,7 +94,7 @@ def process_settings_to_save(unprocessed_settings):
         if setting == 'num_state_samples':
             val = unprocessed_settings.get(setting, "5")
             ret[setting] = int(val)
-        if setting == 'output_directory':
+        if setting == 'base_directory':
             val = unprocessed_settings.get(setting, ".")
             ret[setting] = val
         if setting == 'test_type':
@@ -130,7 +130,7 @@ def setup_manage_settings(base_dir):
     print(settings)
 
     need_to_set = ["experiment_label", "verbose", 'use_density_matrices','t_start', 't_stop', 't_steps', 'partitions', 'infidelity_threshold']
-    need_to_set += ['num_state_samples', 'output_directory', 'test_type']
+    need_to_set += ['num_state_samples', 'base_directory', 'test_type']
     print("[setup] Make sure the followings keys are set: ", need_to_set)
         
     print("[setup] you can modify a setting by writing \'setting=value\' after the \'>\' prompt. Only use one = sign. Enter q to quit.")
