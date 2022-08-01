@@ -13,6 +13,7 @@ INFIDELITY_TEST_TYPE = "infidelity"
 TRACE_DIST_TEST_TYPE = "trace_distance"
 GATE_COST_TEST_TYPE = "gate_cost"
 CROSSOVER_TEST_TYPE = "crossover"
+OPTIMAL_PARTITION_TEST_TYPE = "optimal_partition"
 LAUNCHPAD = "launchpad"
 MINIMAL_SETTINGS = ["experiment_label",
                     "verbose",
@@ -114,6 +115,14 @@ class Experiment:
         results["crossover"] = find_crossover_time(self.sim, p1, p2, t1, t2, verbose=self.verbose)
         return results
 
+    def run_optimal_partition(self):
+        results = {}
+        prob_vec, nb, cost = find_optimal_partition(self.sim, self.times[0], self.infidelity_threshold)
+        results["optimal_probabilities"] = prob_vec
+        results["optimal_nb"] = nb
+        results["optimal_cost"] = cost
+        return results
+
     # TODO: implement multithreading?
     # TODO: How to handle probabilistic partitionings?
     def run(self):
@@ -126,6 +135,8 @@ class Experiment:
             out = self.run_gate_cost()
         elif self.test_type == CROSSOVER_TEST_TYPE:
             out = self.run_crossover()
+        elif self.test_type == OPTIMAL_PARTITION_TEST_TYPE:
+            out = self.run_optimal_partition()
         final_results.update(out)
         self.results = final_results
         if os.path.exists(self.base_directory + "outputs") == False:

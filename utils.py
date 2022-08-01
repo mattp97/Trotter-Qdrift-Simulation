@@ -368,6 +368,10 @@ def find_crossover_time(simulator, partition1, partition2, time_left, time_right
     print("[find_crossover_time] Could not find acceptable crossover within loop bounds. Returning best guess")
     return t_mid
 
+# Return the probabilities for partitioning and the expected cost output of gbrt_minimize
+def find_optimal_partition(simulator, time, infidelity_threshold):
+    return partition_sim(simulator, "gbrt_prob", time=time, epsilon=infidelity_threshold)
+
 # Computes the expected cost of a probabilistic partitioning scheme. 
 def expected_cost(simulator, partition_probs, time, infidelity_threshold, heuristic = -1, num_samples = MC_SAMPLES_DEFAULT):
     print("#" * 75)
@@ -549,6 +553,8 @@ def partition_sim_optimal_chop(simulator, time, epsilon):
     print("result:", result)
 
 # Let boosted regression trees try their best to come up with good probabilities
+# Inputs: self-explanatory
+# Returns: (probability list, nb, expected cost at optimal)
 def partition_sim_gbrt_prob(simulator, time, epsilon):
     hamiltonian = simulator.get_hamiltonian_list()
     dimensions = [Real(0.0, 1.0)] * len(hamiltonian)
@@ -564,6 +570,7 @@ def partition_sim_gbrt_prob(simulator, time, epsilon):
     print("results:")
     print("fun:", result.fun)
     print("x:", result.x)
+    return (result.x[:-1], result.x[-1], result.fun)
 
 def partition_sim_trotter(simulator):
     ham = simulator.get_hamiltonian_list()
