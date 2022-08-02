@@ -5,6 +5,7 @@ from compilers import *
 from tests import Experiment
 import numpy as np
 import sys
+import time as time_this
 import pickle
 import os
 import shutil
@@ -55,6 +56,7 @@ def get_base_dir():
     return base
 
 def compute_entry_point():
+    clock_start = time_this.time()
     base_dir = get_base_dir()
     ham_path, settings_path = find_launchpad(base_dir)
     if type(ham_path) != type("string") or type(settings_path) != type("string"):
@@ -71,10 +73,10 @@ def compute_entry_point():
     print("settings found:")
     print(settings)
 
-    exp = Experiment(base_directory=base_dir)
+    exp = Experiment(base_directory=base_dir, use_density_matrices=settings.get("use_density_matrices", False))
     exp.load_hamiltonian(ham_path)
     exp.load_settings(settings_path)
     exp.run()
-
+    print("[compute] time taken:", time_this.time() - clock_start, " (sec)")
 if __name__ == "__main__":
     compute_entry_point()

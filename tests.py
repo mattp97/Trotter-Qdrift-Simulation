@@ -91,12 +91,13 @@ class Experiment:
         results = {}
         for partition in self.partitions:
             if self.verbose:
-                print("[run_gate_cost] evaluating partition:", partition)
+                print("[run_infidelity] evaluating partition:", partition)
             time_inf_tups = []
             partition_sim(self.sim, partition)
+            print("[run_infidelity] confirming density_matrices are set? self.sim.use_density_matrices=", self.sim.use_density_matrices)
             for t in self.times:
                 if self.verbose:
-                    print("[run_gate_cost] evaluating time:", t)
+                    print("[run_infidelity] evaluating time:", t)
                 per_state_out = []
                 for _ in range(self.num_state_samples):
                     if self.verbose:

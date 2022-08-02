@@ -3,7 +3,6 @@ from asyncore import loop
 from mimetypes import init
 from operator import matmul
 # from telnetlib import AYT
-from cirq import sample
 import numpy as np
 import matplotlib.pyplot as plt
 import statistics
@@ -14,6 +13,7 @@ import math
 from numpy import arange, linspace, outer, random
 import cmath
 import time as time_this
+import scipy
 from sympy import S, symbols, printing
 from skopt import gp_minimize
 from skopt import gbrt_minimize
@@ -127,7 +127,19 @@ def single_infidelity_sample(simulator, time, exact_final_state, iterations = 1,
     if type(simulator) == LRsim:
         sim_output = simulator.simulate(time, iterations)
 
-    infidelity = 1 - (np.abs(np.dot(exact_final_state.conj().T, sim_output)).flat[0])**2
+    if simulator.use_density_matrices == False:
+        infidelity = 1 - (np.abs(np.dot(exact_final_state.conj().T, sim_output)).flat[0])**2
+    else:
+        # check that shapes match
+        if exact_final_state.shape != sim_output.shape:
+            print("[single_infidelity_sample] tried computing density matrix infidelity with incorrect shapes.")
+            print("[single_infidelity_sample] exact output shape =", exact_final_state.shape, ", sim output shape =", sim_output.shape)
+            return 1.
+        exact_sqrt = scipy.linalg.sqrtm(exact_final_state)
+        tot_sqrt = scipy.linalg.sqrtm(np.linalg.multi_dot([exact_sqrt, sim_output, np.copy(exact_sqrt)]))
+        fidelity = np.abs(np.trace(tot_sqrt))
+        print("[single_infidelity_sample] fidelity:", fidelity)
+        infidelity = 1. - (np.abs(np.trace(tot_sqrt)) ** 2)
     return (infidelity, simulator.gate_count)
 
 # @profile
@@ -567,7 +579,7 @@ def partition_sim_gbrt_prob(simulator, time, epsilon):
         simulator.nb = nb
         return expected_cost(simulator, probs, time, epsilon)
     
-    result = gbrt_minimize(obj_fn, dimensions=dimensions, x0=[1.0]*len(hamiltonian) + [1], n_calls=20, verbose=True, acq_func="LCB")
+    result = gbrt_minimize(obj_fn, dimensions=dimensions, x0=[1.0]*len(hamiltonian) + [1], n_calls=20, verbose=True, acq_func="LCB", n_jobs=-1)
     print("results:")
     print("fun:", result.fun)
     print("x:", result.x)
