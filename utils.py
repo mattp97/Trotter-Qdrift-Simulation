@@ -327,6 +327,7 @@ def crossover_criteria_met(cost1, cost2):
 # partition2 - second partition to evaluate
 # time_left - left endpoint for search
 # time_right - right endpoint for search
+# Returns: either computed time or the best guess. Probably should fix this to indicate the cost difference between the partitions
 def find_crossover_time(simulator, partition1, partition2, time_left, time_right, inf_thresh=0.05, verbose=False):
     partition_sim(simulator, partition_type=partition1)
     cost_left_1, _ = find_optimal_cost(simulator, time_left, inf_thresh, verbose=verbose)
@@ -362,7 +363,8 @@ def find_crossover_time(simulator, partition1, partition2, time_left, time_right
         print("t_mid = ", t_mid)
         print("start_with_1 = ", start_with_1)
     for _ in range(COST_LOOP_DEPTH):
-        print("[find_crossover_time] evaluating midpoint: ", t_mid)
+        if verbose:
+            print("[find_crossover_time] evaluating midpoint: ", t_mid)
         t_mid = np.mean([t_upper, t_lower])
         partition_sim(simulator, partition_type=partition1)
         c1, _ = find_optimal_cost(simulator, t_mid, inf_thresh, verbose=verbose)
