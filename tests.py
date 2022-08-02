@@ -15,7 +15,9 @@ GATE_COST_TEST_TYPE = "gate_cost"
 CROSSOVER_TEST_TYPE = "crossover"
 OPTIMAL_PARTITION_TEST_TYPE = "optimal_partition"
 LAUNCHPAD = "launchpad"
-MINIMAL_SETTINGS = ["experiment_label",
+EXPERIMENT_LABEL = "experiment_label"
+DEFAULT_EXPERIMENT_LABEL = "default_experiment_label"
+MINIMAL_SETTINGS = [EXPERIMENT_LABEL,
                     "verbose",
                     'use_density_matrices',
                     't_start',
@@ -159,7 +161,7 @@ class Experiment:
     # TODO: This isn't really necessary anymore with the setup scripts
     def pickle_settings(self, output_path):
         settings = {}
-        settings["experiment_label"] = self.experiment_label
+        settings["experiment_label"] = self.experiment_label.get(EXPERIMENT_LABEL, DEFAULT_EXPERIMENT_LABEL)
         settings["verbose"] = self.verbose
         settings["use_density_matrices"] = self.use_density_matrices
         settings["t_start"] = self.times[0]
@@ -176,7 +178,7 @@ class Experiment:
     # are handled on write, so loading should not have to use these defaults but do this out of precaution. 
     def load_settings(self, settings_path):
         settings = pickle.load(open(settings_path, 'rb'))
-        self.experiment_label     = settings.get('experiment_label', "default_experiment_label")
+        self.experiment_label     = settings.get(EXPERIMENT_LABEL, "default_experiment_label")
         self.verbose              = settings.get("verbose", True)
         self.use_density_matrices = settings.get("use_density_matrices", False)
         self.times                = np.geomspace(settings.get("t_start", 1e-4), settings.get("t_stop", 1e-2), settings.get("t_steps", 10))

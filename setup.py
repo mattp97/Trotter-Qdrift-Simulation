@@ -2,6 +2,7 @@
 
 from utils import *
 from compilers import *
+from tests import *
 import numpy as np
 import sys
 import pickle
@@ -34,6 +35,7 @@ def setup_entry_point():
         scratch_path = os.getenv("SCRATCH")
         if type(scratch_path) != type("string"):
             print("[setup_entry_point] No directory given and no scratch path")
+            sys.exit()
         output_dir = scratch_path
     if output_dir[-1] != '/':
         output_dir += '/'
@@ -60,14 +62,16 @@ def setup_manage_hamiltonians(base_dir):
 def process_settings_to_save(unprocessed_settings):
     ret = {}
     for setting in MINIMAL_SETTINGS:
-        if setting == "experiment_label":
-            val = unprocessed_settings.get(setting, "default label")
+        if setting == EXPERIMENT_LABEL:
+            val = unprocessed_settings.get(setting, DEFAULT_EXPERIMENT_LABEL)
         if setting == "verbose":
             val = unprocessed_settings.get(setting, "True")
             ret[setting] = bool(val)
         if setting == 'use_density_matrices':
-            val = unprocessed_settings.get(setting, "False")
-            ret[setting] = bool(val)
+            if unprocessed_settings.get(setting, "False") == "False":
+                ret['use_density_matrices'] = False
+            else:
+                ret['use_density_matrices'] = True
         if setting == 't_start':
             val = unprocessed_settings.get(setting, "1e-4")
             ret[setting] = float(val)
@@ -141,8 +145,13 @@ def setup_manage_settings(base_dir):
             break
         if user_input == "partitions":
             print("How many partitions?")
-            num_partitions = int(input("> "))
+            num_partitions = input("> ")
             partitions = []
+            try:
+                num_partitions = int(num_partitions)
+            except:
+                print("try again with integer.")
+                continue
             for i in range(num_partitions):
                 p = input("enter partition number " + str(i + 1) + " > ")
                 partitions.append(p)
