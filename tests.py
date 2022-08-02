@@ -1,26 +1,42 @@
-import sys
+#!/usr/bin/env python
 
 from utils import *
 from compilers import *
 import numpy as np
-
+import sys
 import pickle
 import os
+import shutil
 import matplotlib.pyplot as plt
 
 INFIDELITY_TEST_TYPE = "infidelity"
 TRACE_DIST_TEST_TYPE = "trace_distance"
 GATE_COST_TEST_TYPE = "gate_cost"
 CROSSOVER_TEST_TYPE = "crossover"
-
+OPTIMAL_PARTITION_TEST_TYPE = "optimal_partition"
+LAUNCHPAD = "launchpad"
+EXPERIMENT_LABEL = "experiment_label"
+DEFAULT_EXPERIMENT_LABEL = "default_experiment_label"
+MINIMAL_SETTINGS = [EXPERIMENT_LABEL,
+                    "verbose",
+                    'use_density_matrices',
+                    't_start',
+                    't_stop',
+                    't_steps',
+                    'partitions',
+                    'infidelity_threshold',
+                    'num_state_samples',
+                    'base_directory',
+                    'test_type'
+]
 
 # For coordinating runs. 
 class Experiment:
     def __init__(
         self,
         hamiltonian_list = [],
-        output_directory="./",
-        experiment_label="default",
+        base_directory="./",
+        experiment_label="default_experiment_label",
         t_start=1e-3,
         t_stop=1e-1,
         t_steps=50,
@@ -39,66 +55,125 @@ class Experiment:
         self.infidelity_threshold = infidelity_threshold
         self.verbose = verbose
         self.num_state_samples = num_state_samples
-        if output_directory[-1] != '/':
-            self.output_directory = output_directory + '/'
+        if type(os.getenv("SCRATCH")) != type(None):
+            self.base_directory = os.getenv("SCRATCH")
+        elif len(sys.argv) > 1:
+            self.base_directory = sys.argv[1]
         else:
-            self.output_directory = output_directory
+            self.base_directory = base_directory
+        if base_directory[-1] != '/':
+            self.base_directory = base_directory + '/'
         self.experiment_label = experiment_label
     
-    def pickle_hamiltonian(self, input_path):
-        ham_list = self.sim.get_hamiltonian_list()
-        shape = ham_list[0].shape
-        # convert to pickle'able datatype
-        to_pickle = [mat.tolist() for mat in ham_list]
-        to_pickle.append(shape)
-        pickle(to_pickle, open(input_path, 'wb'))
     
-    def load_hamiltonian(self, output_path):
-        unpickled = pickle.load(open(output_path, 'rb'))
-        output_shape = unpickled[-1]
-        ham_list = []
-        for ix in range(len(unpickled) - 1):
-            ham_list.append(np.array(unpickled[ix]).reshape(output_shape))
-        self.sim.set_hamiltonian(ham_list)
-        print("unpickled this many terms", len(ham_list))
-    
-    # TODO: implement multithreading?
-    # TODO: How to handle probabilistic partitionings?
-    def run(self):
+    def run_gate_cost(self):
         results = {}
-        results["times"] = np.copy(self.times).tolist()
         for partition in self.partitions:
             if self.verbose:
-                print("[Experiment.run] evaluating partition type:", partition)
+                print("[run_gate_cost] evaluating partition:", partition)
             outputs = []
-            print("partitioning before any time loops")
-            self.sim.print_partition()
-            partition_sim(self.sim, partition_type=partition)
-            print("#" * 75)
-            print("partition after partitioning")
-            self.sim.print_partition()
-            heuristic = -1
-            for t in results["times"]:
+            heuristic = 1
+            partition_sim(self.sim, partition)
+            for t in self.times:
                 if self.verbose:
-                    print("[Experiment.run] evaluating time:", t)
+                    print("[run_gate_cost] evaluating time:", t)
                 out = 0
                 for _ in range(self.num_state_samples):
                     self.sim.randomize_initial_state()
-                    if self.test_type == "infidelity":
-                        inf_temp, _ = single_infidelity_sample(self.sim, t)
-                        out += inf_temp
-                    elif self.test_type == "gate_cost":
-                        cost, iters = find_optimal_cost(self.sim, t, self.infidelity_threshold, heuristic=heuristic, verbose=self.verbose)
-                        heuristic = iters
-                        out += cost
+                    cost, iters = find_optimal_cost(self.sim, t, self.infidelity_threshold, heuristic=heuristic, verbose=self.verbose)
+                    heuristic = iters
+                    out += cost
                 outputs.append(out / self.num_state_samples)
             results[partition] = outputs
-        self.results = results
-        pickle.dump(self.results, open(self.output_directory + "results.pickle", 'wb'))
+        return results
+    
+    def run_infidelity(self):
+        results = {}
+        for partition in self.partitions:
+            if self.verbose:
+                print("[run_gate_cost] evaluating partition:", partition)
+            time_inf_tups = []
+            partition_sim(self.sim, partition)
+            for t in self.times:
+                if self.verbose:
+                    print("[run_gate_cost] evaluating time:", t)
+                per_state_out = []
+                for _ in range(self.num_state_samples):
+                    if self.verbose:
+                        print("[run_infidelity] on state sample: ", _)
+                    self.sim.randomize_initial_state()
+                    exact_final_state = self.sim.simulate_exact_output(t)
+                    mc_inf, _ = zip(*multi_infidelity_sample(self.sim, t, exact_final_state, mc_samples=10))
+                    if self.verbose:
+                        print("[run_infidelity] observed monte carlo avg inf: ", np.mean(mc_inf), " +- ", np.std(mc_inf))
+                    per_state_out.append(np.mean(mc_inf))
+                time_inf_tups.append((t, np.mean(per_state_out)))
+                print("[run_infidelity] average inf: ", np.mean(per_state_out))
+            results[partition] = time_inf_tups
+        return results
 
+    def run_crossover(self):
+        results = {}
+        if len(self.partitions) < 2:
+            print("[run_crossover] Error: trying to compute crossover with less than two partitions. Bail.")
+            return
+        p1 = self.partitions[0]
+        p2 = self.partitions[1]
+        if len(self.times) < 2:
+            print("[run_crossover] Error: trying to compute crossover without enough endpoints. Bail.")
+            return
+        t1 = self.times[0]
+        t2 = self.times[-1]
+        results["crossover"] = find_crossover_time(self.sim, p1, p2, t1, t2, verbose=self.verbose)
+        return results
+
+    def run_optimal_partition(self):
+        results = {}
+        prob_vec, nb, cost = find_optimal_partition(self.sim, self.times[0], self.infidelity_threshold)
+        results["optimal_probabilities"] = prob_vec
+        results["optimal_nb"] = nb
+        results["optimal_cost"] = cost
+        return results
+
+    # TODO: implement multithreading?
+    # TODO: How to handle probabilistic partitionings?
+    def run(self):
+        final_results = {}
+        final_results["times"] = np.copy(self.times).tolist()
+        final_results["test_type"] = self.test_type
+        if self.test_type == INFIDELITY_TEST_TYPE:
+            out = self.run_infidelity()
+        elif self.test_type == GATE_COST_TEST_TYPE:
+            out = self.run_gate_cost()
+        elif self.test_type == CROSSOVER_TEST_TYPE:
+            out = self.run_crossover()
+        elif self.test_type == OPTIMAL_PARTITION_TEST_TYPE:
+            out = self.run_optimal_partition()
+        final_results.update(out)
+        self.results = final_results
+        if self.base_directory[-1] != '/':
+            self.base_directory += '/'
+        if os.path.exists(self.base_directory + "outputs") == False:
+            try:
+                os.mkdir(self.base_directory + "outputs")
+                output_dir = self.base_directory + "outputs/"
+            except:
+                print("[Experiment.run] no output directory and I couldn't make one. storing in base directory")
+                output_dir = self.base_directory
+        else:
+            output_dir = self.base_directory + "outputs/"
+        try:
+            pickle.dump(final_results, open(output_dir + self.experiment_label + ".pickle", 'wb'))
+            print("[Experiment.run] successfully wrote output to: ", output_dir + self.experiment_label + '.pickle')
+        except:
+            print("[Experiment.run] ERROR: could not save output to:", self.base_directory + 'results.pickle')
+
+
+
+    # TODO: This isn't really necessary anymore with the setup scripts
     def pickle_settings(self, output_path):
         settings = {}
-        settings["experiment_label"] = self.experiment_label
+        settings["experiment_label"] = self.experiment_label.get(EXPERIMENT_LABEL, DEFAULT_EXPERIMENT_LABEL)
         settings["verbose"] = self.verbose
         settings["use_density_matrices"] = self.use_density_matrices
         settings["t_start"] = self.times[0]
@@ -107,136 +182,53 @@ class Experiment:
         settings["partitions"] = self.partitions
         settings["infidelity_threshold"] = self.infidelity_threshold
         settings["num_state_samples"] = self.num_state_samples
-        settings["output_directory"] = self.output_directory
+        settings["base_directory"] = self.base_directory
         settings["test_type"] = self.test_type
         pickle.dump(settings, open(output_path, 'wb'))
 
-    # TODO: Replace dictionary access with get and defaults
+    # given an exact absoulute path to a settings file, loads them into the experiment object. Note that we ensure defaults and formatting
+    # are handled on write, so loading should not have to use these defaults but do this out of precaution. 
     def load_settings(self, settings_path):
         settings = pickle.load(open(settings_path, 'rb'))
-        self.experiment_label     = settings['experiment_label']
-        self.verbose              = settings["verbose"]
-        self.use_density_matrices = settings["use_density_matrices"]
-        self.times                = np.geomspace(settings["t_start"], settings["t_stop"], settings["t_steps"])
-        self.partitions           = settings["partitions"]
-        self.infidelity_threshold = settings["infidelity_threshold"]
-        self.num_state_samples    = settings["num_state_samples"]
-        self.test_type            = settings["test_type"]
+        self.experiment_label     = settings.get(EXPERIMENT_LABEL, "default_experiment_label")
+        self.verbose              = settings.get("verbose", True)
+        self.use_density_matrices = settings.get("use_density_matrices", False)
+        self.times                = np.geomspace(settings.get("t_start", 1e-4), settings.get("t_stop", 1e-2), settings.get("t_steps", 10))
+        self.partitions           = settings.get("partitions", ["first_order_trotter", "qdrift"])
+        self.infidelity_threshold = settings.get("infidelity_threshold", 0.05)
+        self.num_state_samples    = settings.get("num_state_samples", 5)
+        self.test_type            = settings.get("test_type", GATE_COST_TEST_TYPE)
         # Drop self.output_directory? if we can find the settings then just output there
 
-def test_qdrift():
-    graph_ham = graph_hamiltonian(4, 2, 1) 
-    e = Experiment(graph_ham, t_start=1e-5, t_stop=1e-2, t_steps=20, verbose=True, experiment_label="testing class performance")
-    e.run()
-    e.pickle_results()
+    # Inputs:
+    # - An absoluate path to a pickled hamiltonian file. converts to numpy array and makes sure simulator is loaded with that hamiltonian.
+    def load_hamiltonian(self, input_path):
+        unpickled = pickle.load(open(input_path, 'rb'))
+        output_shape = unpickled[-1]
+        ham_list = []
+        for ix in range(len(unpickled) - 1):
+            ham_list.append(np.array(unpickled[ix]).reshape(output_shape))
+        print("[load_hamiltonian] loaded this many terms: ", len(ham_list))
+        self.sim.set_hamiltonian(ham_list)
 
-def find_pickles():
+def pickle_hamiltonian(output_path, unparsed_ham_list):
+    shape = unparsed_ham_list[0].shape
+    # convert to pickle'able datatype
+    to_pickle = [mat.tolist() for mat in unparsed_ham_list]
+    to_pickle.append(shape)
+    pickle.dump(to_pickle, open(output_path, 'wb'))
+
+def hamiltonian_entry_point():
     if len(sys.argv) == 3:
-        scratch_path = sys.argv[-1]
+        ham_path = sys.argv[2]
     else:
-        scratch_path = os.getenv("SCRATCH")
-        if type(scratch_path) != type("string"):
-            print("[find_pickle] Error, could not find SCRATCH environment variable")
-            return None, None, None
-    if scratch_path[-1] != '/':
-        scratch_path += '/'
-    if os.path.exists(scratch_path + 'hamiltonian.pickle'):
-        ham_path = scratch_path + 'hamiltonian.pickle'
+        print("[hamiltonian_entry_point] No hamiltonian store path provided. quitting.")
+        sys.exit()
+    graph_path = ham_path + "/graph_4_2_1.pickle"
+    if os.path.exists(graph_path):
+        print("[hamiltonian_entry_point] graph_4_2_1.pickle exists")
+        sys.exit()
     else:
-        ham_path = None
-    if os.path.exists(scratch_path + 'settings.pickle'):
-        settings_path = scratch_path + 'settings.pickle'
-    else:
-        settings_path = None
-    return ham_path, settings_path, scratch_path
-    
-def setup_entry_point():
-    if len(sys.argv) == 3:
-        output_dir = sys.argv[-1]
-    else:
-        print("[setup_entry_point] No output directory given, using SCRATCH")
-        scratch_path = os.getenv("SCRATCH")
-        if type(scratch_path) != type("string"):
-            print("[setup_entry_point] No directory given and no scratch path")
-        output_dir = scratch_path
-    if output_dir[-1] != '/':
-        output_dir += '/'
+        print("[hamiltonian_entry_point] no file found, using this as file path: ", graph_path)
     ham_list = graph_hamiltonian(4,2,1)
-    shape = ham_list[0].shape
-    pickle_ham = [mat.tolist() for mat in ham_list]
-    pickle_ham.append(shape)
-    experiment_label = input("label for the experiment (string): ")
-    verbose = input("verbose (True/False): ")
-    use_density_matrices = input("use_density_matrices (True/False): ")
-    t_start = input("t_start (float): ")
-    t_stop = input("t_stop (float): ")
-    t_steps = input("t_steps (positive int): ")
-    num_partitions = input("number of partitions: ")
-    partitions = []
-    for i in range(int(num_partitions)):
-        partitions.append(input("enter partition type #" + str(i + 1) +" : "))
-    infidelity_threshold = input("infidelity threshold (float): ")
-    num_state_samples = input("num_state_samples (positive int): ")
-    output_directory = input("output_dir (string): ")
-    test_type = input("test_type (string): ")
-    settings ={}
-    settings["experiment_label"] = experiment_label
-    settings["verbose"] = bool(verbose)
-    settings["use_density_matrices"] = bool(use_density_matrices)
-    settings["t_start"] = float(t_start)
-    settings["t_stop"] = float(t_stop)
-    settings["t_steps"] = int(t_steps)
-    settings["partitions"] = partitions
-    settings["infidelity_threshold"] = float(infidelity_threshold)
-    settings["num_state_samples"] = int(num_state_samples)
-    settings["output_directory"] = output_directory
-    settings["test_type"] = test_type
-    pickle.dump(settings, open(output_dir + "settings.pickle", 'wb'))
-    pickle.dump(pickle_ham, open(output_dir + "hamiltonian.pickle", 'wb'))
-
-def compute_entry_point():
-    ham_path, settings_path, scratch_dir = find_pickles()
-    if type(ham_path) != type("string") or type(settings_path) != type("string") or type(scratch_dir) != type("string"):
-        print("[tests.py] Error: could not find hamiltonian.pickle or settings.pickle")
-        sys.exit()
-    ham_list = pickle.load(open(ham_path, 'rb'))
-    settings = pickle.load(open(settings_path, 'rb'))
-    print("[compute_entry_point] hamiltonian found with this many terms:", len(ham_list))
-    print("#" * 50)
-    print("settings found:")
-    print(settings)
-    working_dir = scratch_dir + 'output'
-    if os.path.exists(working_dir) == False:
-        os.mkdir(working_dir)
-    exp = Experiment(output_directory=working_dir)
-    exp.load_hamiltonian(ham_path)
-    exp.load_settings(settings_path)
-    exp.run()
-
-# Analyze the results from the results.pickle file of a previous run
-def analyze_entry_point():
-    if len(sys.argv) == 3:
-        results_path = sys.argv[-1]
-    else:
-        print("[analyze_entry_point] No results.pickle file path provided. quitting.")
-        sys.exit()
-    results = pickle.load(open(results_path, 'rb'))
-    print("results:")
-    print(results)
-    times = results["times"]
-    for k,v in results.items():
-        if k != "times":
-            plt.plot(times, v, label=k)
-    plt.show()
-
-
-if __name__ == "__main__":
-    if sys.argv[1] == "setup":
-        setup_entry_point()
-    if sys.argv[1] == "compute":
-        compute_entry_point()
-    if sys.argv[1] == "analyze":
-        analyze_entry_point()
-    
-
-    
+    pickle_hamiltonian(graph_path, ham_list)
