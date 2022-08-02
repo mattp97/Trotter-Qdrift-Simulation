@@ -36,7 +36,7 @@ class Experiment:
         self,
         hamiltonian_list = [],
         base_directory="./",
-        experiment_label="default",
+        experiment_label="default_experiment_label",
         t_start=1e-3,
         t_stop=1e-1,
         t_steps=50,
@@ -55,10 +55,14 @@ class Experiment:
         self.infidelity_threshold = infidelity_threshold
         self.verbose = verbose
         self.num_state_samples = num_state_samples
-        if base_directory[-1] != '/':
-            self.base_directory = base_directory + '/'
+        if type(os.getenv("SCRATCH")) != type(None):
+            self.base_directory = os.getenv("SCRATCH")
+        elif len(sys.argv) > 1:
+            self.base_directory = sys.argv[1]
         else:
             self.base_directory = base_directory
+        if base_directory[-1] != '/':
+            self.base_directory = base_directory + '/'
         self.experiment_label = experiment_label
     
     
@@ -88,18 +92,24 @@ class Experiment:
         for partition in self.partitions:
             if self.verbose:
                 print("[run_gate_cost] evaluating partition:", partition)
-            outputs = []
+            time_inf_tups = []
             partition_sim(self.sim, partition)
             for t in self.times:
                 if self.verbose:
                     print("[run_gate_cost] evaluating time:", t)
-                out = 0
+                per_state_out = []
                 for _ in range(self.num_state_samples):
+                    if self.verbose:
+                        print("[run_infidelity] on state sample: ", _)
                     self.sim.randomize_initial_state()
-                    inf_temp, _ = single_infidelity_sample(self.sim, t)
-                    out += inf_temp
-                outputs.append(out / self.num_state_samples)
-            results[partition] = outputs
+                    exact_final_state = self.sim.simulate_exact_output(t)
+                    mc_inf, _ = zip(*multi_infidelity_sample(self.sim, t, exact_final_state, mc_samples=10))
+                    if self.verbose:
+                        print("[run_infidelity] observed monte carlo avg inf: ", np.mean(mc_inf), " +- ", np.std(mc_inf))
+                    per_state_out.append(np.mean(mc_inf))
+                time_inf_tups.append((t, np.mean(per_state_out)))
+                print("[run_infidelity] average inf: ", np.mean(per_state_out))
+            results[partition] = time_inf_tups
         return results
 
     def run_crossover(self):
@@ -141,6 +151,8 @@ class Experiment:
             out = self.run_optimal_partition()
         final_results.update(out)
         self.results = final_results
+        if self.base_directory[-1] != '/':
+            self.base_directory += '/'
         if os.path.exists(self.base_directory + "outputs") == False:
             try:
                 os.mkdir(self.base_directory + "outputs")
@@ -152,7 +164,7 @@ class Experiment:
             output_dir = self.base_directory + "outputs/"
         try:
             pickle.dump(final_results, open(output_dir + self.experiment_label + ".pickle", 'wb'))
-            print("[Experiment.run] successfully wrote output.")
+            print("[Experiment.run] successfully wrote output to: ", output_dir + self.experiment_label + '.pickle')
         except:
             print("[Experiment.run] ERROR: could not save output to:", self.base_directory + 'results.pickle')
 

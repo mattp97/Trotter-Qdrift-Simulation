@@ -26,6 +26,7 @@ MC_SAMPLES_DEFAULT = 10
 COST_LOOP_DEPTH = 30
 ITERATION_BOUNDS_LOOP_DEPTH = 100 # specifies power of 2 for maximum number of iterations to search through
 CROSSOVER_CUTOFF_PERCENTAGE = 0.01
+POSSIBLE_PARTITIONS = ["first_order_trotter", "second_order_trotter", "qdrift"]
 
 # A simple function that computes the graph distance between two sites
 def dist(site1, site2):

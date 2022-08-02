@@ -59,9 +59,10 @@ def analyze_entry_point():
     print(results)
     times = results["times"]
     if results.get("test_type", "") != CROSSOVER_TEST_TYPE:
-        for k,v in results.items():
-            if k != "times":
-                plt.plot(times, v, label=k)
+        for p in POSSIBLE_PARTITIONS:
+            if p in results:
+                x,y = zip(*results[p])
+                plt.plot(x,y, label = p)
         plt.show()
 
 if __name__ == "__main__":

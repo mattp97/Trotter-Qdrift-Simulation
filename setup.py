@@ -131,7 +131,8 @@ def setup_manage_settings(base_dir):
             print("[setup] could not find specified settings file: " + settings_path + " so using empty")
 
     print("[setup] These are the currently existing settings:")
-    print(settings)
+    for k,v in settings.items():
+        print(k, "= ", v)
 
     need_to_set = ["experiment_label", "verbose", 'use_density_matrices','t_start', 't_stop', 't_steps', 'partitions', 'infidelity_threshold']
     need_to_set += ['num_state_samples', 'base_directory', 'test_type']
@@ -143,7 +144,14 @@ def setup_manage_settings(base_dir):
         if user_input == "q":
             # TODO: Need to check that each required setting has been set.
             break
-        if user_input == "partitions":
+        elif user_input.startswith("clear"):
+            try:
+                var = user_input.split(" ")[-1]
+                del settings[var]
+            except:
+                print("usage is 'clear <varname>' to clear, or <varname> is not in settings.")
+                continue
+        elif user_input == "partitions":
             print("How many partitions?")
             num_partitions = input("> ")
             partitions = []
