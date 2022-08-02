@@ -990,9 +990,9 @@ class LRsim:
         self.hilbert_dim = hamiltonian_list[0].shape[0] 
         self.rng_seed = rng_seed
 
-        self.comp_sim_A = CompositeSim(inner_order=1, outer_order=1, use_density_matrices=True)
-        self.comp_sim_Y = CompositeSim(inner_order=1, outer_order=1, use_density_matrices=True)
-        self.comp_sim_B = CompositeSim(inner_order=1, outer_order=1, use_density_matrices=True)
+        self.comp_sim_A = CompositeSim(inner_order=inner_order, outer_order=1, use_density_matrices=True)
+        self.comp_sim_Y = CompositeSim(inner_order=inner_order, outer_order=1, use_density_matrices=True)
+        self.comp_sim_B = CompositeSim(inner_order=inner_order, outer_order=1, use_density_matrices=True)
 
         self.internal_sims = [self.comp_sim_A, self.comp_sim_Y, self.comp_sim_B]
 

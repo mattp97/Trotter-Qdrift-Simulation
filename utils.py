@@ -570,6 +570,7 @@ def hamiltonian_localizer_1d(local_hamiltonian, sub_block_size, sub_blocks = 1):
     return (a_terms, y_terms, b_terms)
 
 def local_partition(simulator, partition, weights = None, time = 0.01, epsilon = 0.001): #weights is a list with ordering A, Y, B
+        if type(simulator) != LRsim: raise TypeError("only works on LRsims")
         if partition == "chop":
             local_chop(simulator, weights)
         if partition == "optimal_chop":
@@ -611,12 +612,12 @@ def optimal_local_chop(simulator, time, epsilon): ### needs exact cost function 
 
     @use_named_args(dimensions=dimensions)
     def obj_func():
-        local_chop(simulator, )
+        set_local_nb(simulator, nb_list)
+        local_chop(simulator, time, epsilon)
         return exact_cost(simulator, time, epsilon)
     
     gbrt_minimize(func=obj_func,dimensions=dimensions, n_calls=20, n_initial_points = 5, 
                 random_state=4, verbose = False, acq_func = "LCB", x0 = guess_points)
-
     return 0
 
 def exact_cost(simulator, time, epsilon): #relies on the use of density matrices
@@ -672,7 +673,7 @@ def exact_cost(simulator, time, epsilon): #relies on the use of density matrices
     get_trace_dist(mid)
     return simulator.gate_count
 
-def sim_trace_distance(simulator, time, iterations, nb):
+def sim_trace_distance(simulator, time, iterations, nb): #put nb in here and unparsed
     if type(simulator) == TrotterSim:
         return trace_distance(simulator.simulate(time, iterations), exact_time_evolution(simulator.hamiltonian_list, 
                             time, simulator.initial_state))
