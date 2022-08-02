@@ -2,7 +2,7 @@
 
 from utils import *
 from compilers import *
-from tests import Experiment
+from tests import *
 import numpy as np
 import sys
 import time as time_this
@@ -11,23 +11,23 @@ import os
 import shutil
 import matplotlib.pyplot as plt
 
-INFIDELITY_TEST_TYPE = "infidelity"
-TRACE_DIST_TEST_TYPE = "trace_distance"
-GATE_COST_TEST_TYPE = "gate_cost"
-CROSSOVER_TEST_TYPE = "crossover"
-LAUNCHPAD = "launchpad"
-MINIMAL_SETTINGS = ["experiment_label",
-                    "verbose",
-                    'use_density_matrices',
-                    't_start',
-                    't_stop',
-                    't_steps',
-                    'partitions',
-                    'infidelity_threshold',
-                    'num_state_samples',
-                    'output_directory',
-                    'test_type'
-]
+# INFIDELITY_TEST_TYPE = "infidelity"
+# TRACE_DIST_TEST_TYPE = "trace_distance"
+# GATE_COST_TEST_TYPE = "gate_cost"
+# CROSSOVER_TEST_TYPE = "crossover"
+# LAUNCHPAD = "launchpad"
+# MINIMAL_SETTINGS = ["experiment_label",
+#                     "verbose",
+#                     'use_density_matrices',
+#                     't_start',
+#                     't_stop',
+#                     't_steps',
+#                     'partitions',
+#                     'infidelity_threshold',
+#                     'num_state_samples',
+#                     'output_directory',
+#                     'test_type'
+# ]
 
 def find_launchpad(base_dir):
     launchpad = base_dir + LAUNCHPAD + '/'
@@ -78,5 +78,6 @@ def compute_entry_point():
     exp.load_settings(settings_path)
     exp.run()
     print("[compute] time taken:", time_this.time() - clock_start, " (sec)")
+
 if __name__ == "__main__":
     compute_entry_point()

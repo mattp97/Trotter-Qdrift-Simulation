@@ -94,10 +94,14 @@ def graph_hamiltonian(x_dim, y_dim, rng_seed):
 
 #A function to calculate the trace distance between two numpy arrays (density operators)
 def trace_distance(rho, sigma):
+    # MATT H: I think the below is probably inefficient, no need to compute entire eigendecomposition when a square root + trace will work.
+    # diff = rho - sigma
+    # w, v = np.linalg.eigh(diff)
+    # dist = 1/2 * sum(np.abs(w))
+    # return dist
     diff = rho - sigma
-    w, v = np.linalg.eigh(diff)
-    dist = 1/2 * sum(np.abs(w))
-    return dist
+    tot = scipy.linalg.sqrtm(diff @ np.copy(diff).conj().T)
+    return 0.5 * np.abs(np.trace(tot)) # Note: absolute value after trace is because we have 'complex' variables, so taking the norm should be fine??
 
 def exact_time_evolution_density(hamiltonian_list, time, initial_rho):
     if len(hamiltonian_list) == 0:
@@ -155,6 +159,33 @@ def multi_infidelity_sample(simulator, time, exact_final_state, iterations=1, nb
 
     return ret
 
+def single_trace_distance_sample(simulator, time, exact_final_state, iterations=1, nbsamples=1):
+    if type(simulator) == QDriftSim:
+        sim_output = simulator.simulate(time, nbsamples)
+    else:
+        sim_output = simulator.simulate(time, iterations)
+    if simulator.use_density_matrices == False:
+        return trace_distance(np.outer(sim_output, np.copy(sim_output).conj().T), np.outer(exact_final_state, np.copy(exact_final_state).conj().T))
+    else:
+        return trace_distance(sim_output, exact_final_state)
+    
+
+def multi_trace_distance_sample(simulator, time, exact_final_state, iterations=1, nbsamples=1, mc_samples=MC_SAMPLES_DEFAULT):
+    ret = []
+    if type(simulator) == TrotterSim or len(simulator.qdrift_norms) == 0:
+        ret.append(single_trace_distance_sample(simulator, time, exact_final_state, iterations=iterations, nbsamples=nbsamples))
+        ret *= mc_samples
+    else:
+        sim_out =  np.zeros(simulator.initial_state.shape, dtype='complex128')
+        for _ in range(mc_samples):
+            sim_out += simulator.simulate(time, iterations)
+        sim_out /= mc_samples
+        if simulator.use_density_matrices == False:
+            ret =  trace_distance(np.outer(sim_out, np.copy(sim_out).conj().T), np.outer(exact_final_state, np.copy(exact_final_state).conj().T))
+        else:
+            ret = trace_distance(sim_out, exact_final_state)
+    return ret
+
 def is_threshold_met(infidelities, threshold):
     mean = np.mean(infidelities)
     std_dev = np.std(infidelities)
@@ -195,6 +226,8 @@ def get_iteration_bound(infidelity_fn, infidelity_bound, iter_bound, is_lower_bo
     return curr_guess
 
 # Performs exponential backoff to find iteration bounds
+# WARNING: With randomized composite channels there is a possibility this does not converge correctly. If you get a "good" sample at
+# a heuristic that should be bad then you will search for a lower bound until you exit.  
 # Inputs
 # - inf_fn: a callable that takes in an iteration and returns a list of infidelities to be fed into is_threshold_met
 # - infidelity_threshold: the threshold needed to be fed into is_threshold_met
@@ -209,6 +242,8 @@ def get_iteration_bounds(inf_fn, infidelity_threshold, heuristic, verbose=False)
             iter_lower = 5
             iter_upper = -1
     else:
+        # This is to help with randomized partitions (aka qdrift heavy)
+        heuristic = math.floor(0.8 * heuristic) 
         if is_threshold_met(inf_fn(heuristic), infidelity_threshold):
             iter_lower = -1
             iter_upper = heuristic
@@ -217,12 +252,13 @@ def get_iteration_bounds(inf_fn, infidelity_threshold, heuristic, verbose=False)
             iter_upper = -1
     curr_guess = max(iter_lower, iter_upper)
     if verbose:
-        print("[get_iteration_bounds] Beginning search with iter_lower, iter_upper, curr_guess:", iter_lower, ", ", iter_upper, ", ", curr_guess)
+        print("[get_iteration_bounds] Beginning search with iter_lower=", iter_lower, ", iter_upper=", iter_upper, ", curr_guess=",curr_guess)
     for i in range(ITERATION_BOUNDS_LOOP_DEPTH):
+        search_for_upper_bound = (iter_lower > 0) and (iter_upper < 0)
+        search_for_lower_bound = (iter_lower < 0) and (iter_upper > 0)
         if verbose:
             print("[get_iteration_bounds] iteration: ", i, ", current guess: ", curr_guess)
-        # Search for lower bound
-        if iter_lower <= 0 and iter_upper > 0:
+        if search_for_lower_bound:
             # step = min(100, math.floor(curr_guess / 2.0))
             step = int(curr_guess)
             new_guess = int(curr_guess - step)
@@ -232,23 +268,21 @@ def get_iteration_bounds(inf_fn, infidelity_threshold, heuristic, verbose=False)
             else:
                 # threshold was NOT met so we have found our iter_lower
                 iter_lower = new_guess
+                continue
 
-        # Search for upper bound
-        elif iter_lower > 0 and iter_upper <= 0:
+        elif search_for_upper_bound:
             # step = min(100, math.ceil(curr_guess * 2))
             step = math.ceil(curr_guess)
             new_guess = int(curr_guess + step)
             if is_threshold_met(inf_fn(new_guess), infidelity_threshold):
                 # upper bound needs to meet threshold so we are good
                 iter_upper = new_guess
+                continue
             else:
                 curr_guess = new_guess
-        elif iter_lower >= 1 and iter_upper >= 1:
+        else:
             return (iter_lower, iter_upper)
-        elif iter_lower <= 0 and iter_upper <= 0:
-            print("[get_iteration_bounds] found both bounds <= 0, resetting.")
-            iter_lower = 1
-            iter_upper = -1
+
     print("[get_iteration_bounds] Iteration depth reached, unclear what to do.")
     raise Exception("get_iteration_bounds")
 

@@ -64,6 +64,7 @@ def process_settings_to_save(unprocessed_settings):
     for setting in MINIMAL_SETTINGS:
         if setting == EXPERIMENT_LABEL:
             val = unprocessed_settings.get(setting, DEFAULT_EXPERIMENT_LABEL)
+            ret[setting] = val
         if setting == "verbose":
             val = unprocessed_settings.get(setting, "True")
             ret[setting] = bool(val)

@@ -50,7 +50,7 @@ def analyze_entry_point():
     dir_options = os.listdir(output_dir)
     for ix in range(len(dir_options)):
         print("option (" + str(ix + 1) + ") = ", dir_options[ix])
-    response = input("which file to use?")
+    response = input("which file to use: ")
     try:
         index = int(response)
         filename = dir_options[index - 1]
@@ -73,10 +73,10 @@ def analyze_entry_point():
                 print("partition: ", p)
                 for ix in range(len(x)):
                     print("x, y: ", x[ix], ", ", y[ix])
-                logx = np.log10(np.abs(x[: ceil(len(x)/2)]))
-                logy = np.log10(np.abs(y[: ceil(len(y)/2)]))
+                logx = np.log10(np.abs(x))
+                logy = np.log10(np.abs(y))
                 try:
-                    coef = np.polyfit(np.log10(x[:floor(len(x)/2)]), np.log10(y[:floor(len(y)/2)]), 1)
+                    coef = np.polyfit(logx, logy, 1)
                     print("[analyze] linear fit of first half coefficients:", coef)
                 except Exception as e:
                     print("[analyze] could not do linear fit, e: ", e)
