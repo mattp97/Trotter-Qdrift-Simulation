@@ -12,7 +12,7 @@ from skopt.space import Real, Integer
 from skopt.utils import use_named_args
 import cProfile, pstats, io
 
-# from utils import initial_state_randomizer
+#from utils import initial_state_randomizer
 
 
 #A simple profiler. To use this, place @profile above the function of interest
@@ -410,7 +410,7 @@ class CompositeSim:
         else:
             self.hilbert_dim = 0
 
-        # self.hilbert_dim = hamiltonian_list[0].shape[0] 
+        #self.hilbert_dim = hamiltonian_list[0].shape[0] #this was commented out before?
         self.rng_seed = rng_seed
         self.outer_order = outer_order 
         self.inner_order = inner_order
@@ -570,7 +570,6 @@ class LRsim:
         hamiltonian_list, 
         local_hamiltonian, #a tuple of lists of H terms: each index of the tuple contains a list representing a local block
         inner_order,
-        partition,
         nb = [], #should be a list in this case
         state_rand = True,
         rng_seed = 1
@@ -580,21 +579,24 @@ class LRsim:
         self.local_hamiltonian = local_hamiltonian
         self.inner_order = inner_order
         self.spectral_norms = [] # a list of lists of the spectral norms of each local bracket
-        self.partition = partition 
         self.state_rand = state_rand
         self.hilbert_dim = hamiltonian_list[0].shape[0] 
         self.rng_seed = rng_seed
 
-        self.comp_sim_A = CompositeSim(inner_order=inner_order, outer_order=1, use_density_matrices=True)
-        self.comp_sim_Y = CompositeSim(inner_order=inner_order, outer_order=1, use_density_matrices=True)
-        self.comp_sim_B = CompositeSim(inner_order=inner_order, outer_order=1, use_density_matrices=True)
+        self.comp_sim_A = CompositeSim(hamiltonian_list = self.local_hamiltonian[0], inner_order=inner_order, outer_order=1, use_density_matrices=True)
+        self.comp_sim_Y = CompositeSim(hamiltonian_list = self.local_hamiltonian[1], inner_order=inner_order, outer_order=1, use_density_matrices=True)
+        self.comp_sim_B = CompositeSim(hamiltonian_list = self.local_hamiltonian[2], inner_order=inner_order, outer_order=1, use_density_matrices=True)
 
         self.internal_sims = [self.comp_sim_A, self.comp_sim_Y, self.comp_sim_B]
 
         np.random.seed(self.rng_seed)
+        #Set the nb for each sim
         self.nb = nb
-        if type(self.nb) != type(list): raise TypeError("nb is a list that requires input for each local block")
+        if type(self.nb) != type([]): raise TypeError("nb is a list that requires input for each local block")
+        for l in range(len(self.nb)):
+            self.internal_sims[l].nb = self.nb[l]
 
+        #create a list of lists for spectral norms
         for i in range(len(self.local_hamiltonian)):
             temp = []
             for j in range(len(self.local_hamiltonian[i])):
@@ -619,18 +621,18 @@ class LRsim:
 
     def simulate(self, time, iterations):
         current_state = np.copy(self.initial_state)
-        for i in range(iterations):
-            self.comp_sim_A.set_initial_state(current_state)
-            current_state = self.comp_sim_A.simulate(time/iterations, 1)
-            self.gate_count += self.comp_sim_A.gate_count
 
-            self.comp_sim_Y.set_initial_state(current_state)
-            current_state = self.comp_sim_Y.simulate(time/iterations, 1)
-            self.gate_count += self.comp_sim_A.gate_count
+        self.comp_sim_A.set_initial_state(current_state)
+        current_state = self.comp_sim_A.simulate(time, iterations)
+        self.gate_count += self.comp_sim_A.gate_count
 
-            self.comp_sim_B.set_initial_state(current_state)
-            current_state = self.comp_sim_B.simulate(time/iterations, 1)
-            self.gate_count += self.comp_sim_A.gate_count
+        self.comp_sim_Y.set_initial_state(current_state)
+        current_state = self.comp_sim_Y.simulate(time, iterations)
+        self.gate_count += self.comp_sim_Y.gate_count
+
+        self.comp_sim_B.set_initial_state(current_state)
+        current_state = self.comp_sim_B.simulate(time, iterations)
+        self.gate_count += self.comp_sim_B.gate_count
 
         self.final_state = current_state
         return np.copy(self.final_state)
