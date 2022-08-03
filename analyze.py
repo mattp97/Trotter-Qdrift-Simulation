@@ -2,6 +2,7 @@
 
 from utils import *
 from compilers import *
+from math import floor, ceil
 import numpy as np
 import sys
 import pickle
@@ -46,8 +47,15 @@ def analyze_entry_point():
         output_dir = base_dir
     print("[analyze_entry_point] Output directory: ", output_dir)
     print("[analyze_entry_point] possible outputs to load: ")
-    print(os.listdir(output_dir))
-    filename = input("[analyze] which file to use? ")
+    dir_options = os.listdir(output_dir)
+    for ix in range(len(dir_options)):
+        print("option (" + str(ix + 1) + ") = ", dir_options[ix])
+    response = input("which file to use: ")
+    try:
+        index = int(response)
+        filename = dir_options[index - 1]
+    except:
+        filename = response
     if filename[-len(".pickle"):] != ".pickle":
         filename += ".pickle"
     try:
@@ -62,7 +70,20 @@ def analyze_entry_point():
         for p in POSSIBLE_PARTITIONS:
             if p in results:
                 x,y = zip(*results[p])
-                plt.plot(x,y, label = p)
+                print("partition: ", p)
+                for ix in range(len(x)):
+                    print("x, y: ", x[ix], ", ", y[ix])
+                logx = np.log10(np.abs(x))
+                logy = np.log10(np.abs(y))
+                try:
+                    coef = np.polyfit(logx, logy, 1)
+                    print("[analyze] linear fit of first half coefficients:", coef)
+                except Exception as e:
+                    print("[analyze] could not do linear fit, e: ", e)
+                plt.loglog(x,y, label = p)
+        plt.legend()
+        plt.xlabel("times")
+        plt.ylabel(results.get("test_type", ""))
         plt.show()
 
 if __name__ == "__main__":

@@ -91,12 +91,13 @@ class Experiment:
         results = {}
         for partition in self.partitions:
             if self.verbose:
-                print("[run_gate_cost] evaluating partition:", partition)
+                print("[run_infidelity] evaluating partition:", partition)
             time_inf_tups = []
             partition_sim(self.sim, partition)
+            print("[run_infidelity] confirming density_matrices are set? self.sim.use_density_matrices=", self.sim.use_density_matrices)
             for t in self.times:
                 if self.verbose:
-                    print("[run_gate_cost] evaluating time:", t)
+                    print("[run_infidelity] evaluating time:", t)
                 per_state_out = []
                 for _ in range(self.num_state_samples):
                     if self.verbose:
@@ -135,6 +136,32 @@ class Experiment:
         results["optimal_cost"] = cost
         return results
 
+    def run_trace_distance(self):
+        results = {}
+        for partition in self.partitions:
+            if self.verbose:
+                print("[run_trace_distance] evaluating partition:", partition)
+            time_dist_tups = []
+            partition_sim(self.sim, partition)
+            print("[run_trace_distance] confirming density_matrices are set? self.sim.use_density_matrices=", self.sim.use_density_matrices)
+            for t in self.times:
+                if self.verbose:
+                    print("[run_trace_distance] evaluating time:", t)
+                per_state_out = []
+                for _ in range(self.num_state_samples):
+                    if self.verbose:
+                        print("[run_trace_distance] on state sample: ", _)
+                    self.sim.randomize_initial_state()
+                    exact_final_state = self.sim.simulate_exact_output(t)
+                    mc_dist = multi_trace_distance_sample(self.sim, t, exact_final_state, mc_samples=5000)
+                    if self.verbose:
+                        print("[run_trace_distance] observed monte carlo avg dist: ", np.mean(mc_dist), " +- ", np.std(mc_dist))
+                    per_state_out.append(np.mean(mc_dist))
+                time_dist_tups.append((t, np.mean(per_state_out)))
+                print("[run_trace_distance] average dist: ", np.mean(per_state_out))
+            results[partition] = time_dist_tups
+        return results
+
     # TODO: implement multithreading?
     # TODO: How to handle probabilistic partitionings?
     def run(self):
@@ -149,6 +176,8 @@ class Experiment:
             out = self.run_crossover()
         elif self.test_type == OPTIMAL_PARTITION_TEST_TYPE:
             out = self.run_optimal_partition()
+        elif self.test_type == TRACE_DIST_TEST_TYPE:
+            out = self.run_trace_distance()
         final_results.update(out)
         self.results = final_results
         if self.base_directory[-1] != '/':

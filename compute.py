@@ -2,31 +2,32 @@
 
 from utils import *
 from compilers import *
-from tests import Experiment
+from tests import *
 import numpy as np
 import sys
+import time as time_this
 import pickle
 import os
 import shutil
 import matplotlib.pyplot as plt
 
-INFIDELITY_TEST_TYPE = "infidelity"
-TRACE_DIST_TEST_TYPE = "trace_distance"
-GATE_COST_TEST_TYPE = "gate_cost"
-CROSSOVER_TEST_TYPE = "crossover"
-LAUNCHPAD = "launchpad"
-MINIMAL_SETTINGS = ["experiment_label",
-                    "verbose",
-                    'use_density_matrices',
-                    't_start',
-                    't_stop',
-                    't_steps',
-                    'partitions',
-                    'infidelity_threshold',
-                    'num_state_samples',
-                    'output_directory',
-                    'test_type'
-]
+# INFIDELITY_TEST_TYPE = "infidelity"
+# TRACE_DIST_TEST_TYPE = "trace_distance"
+# GATE_COST_TEST_TYPE = "gate_cost"
+# CROSSOVER_TEST_TYPE = "crossover"
+# LAUNCHPAD = "launchpad"
+# MINIMAL_SETTINGS = ["experiment_label",
+#                     "verbose",
+#                     'use_density_matrices',
+#                     't_start',
+#                     't_stop',
+#                     't_steps',
+#                     'partitions',
+#                     'infidelity_threshold',
+#                     'num_state_samples',
+#                     'output_directory',
+#                     'test_type'
+# ]
 
 def find_launchpad(base_dir):
     launchpad = base_dir + LAUNCHPAD + '/'
@@ -55,6 +56,7 @@ def get_base_dir():
     return base
 
 def compute_entry_point():
+    clock_start = time_this.time()
     base_dir = get_base_dir()
     ham_path, settings_path = find_launchpad(base_dir)
     if type(ham_path) != type("string") or type(settings_path) != type("string"):
@@ -71,10 +73,11 @@ def compute_entry_point():
     print("settings found:")
     print(settings)
 
-    exp = Experiment(base_directory=base_dir)
+    exp = Experiment(base_directory=base_dir, use_density_matrices=settings.get("use_density_matrices", False))
     exp.load_hamiltonian(ham_path)
     exp.load_settings(settings_path)
     exp.run()
+    print("[compute] time taken:", time_this.time() - clock_start, " (sec)")
 
 if __name__ == "__main__":
     compute_entry_point()

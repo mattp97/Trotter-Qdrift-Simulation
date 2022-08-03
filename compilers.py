@@ -188,10 +188,13 @@ class TrotterSim:
         # or matrix-vec multiplications. ALSO ITERATIONS IS HANDLED HERE in a really slick/sneaky way.
         final_state = np.copy(self.initial_state)
         if self.use_density_matrices:
-            reversed = []
-            for mat in matrix_mul_list:
-                reversed.insert(0, mat.conj().T)
+            reversed = matrix_mul_list.copy()
+            reversed.reverse()
+            for ix in range(len(reversed)):
+                reversed[ix] = reversed[ix].conj().T
             final_state = np.linalg.multi_dot(matrix_mul_list * iterations + [self.initial_state] + reversed * iterations)
+            if np.abs(np.abs(np.trace(final_state)) - np.abs(np.trace(self.initial_state))) > 1e-12:
+                print("[Trotter_sim.simulate] Error: significant non-trace preserving operation was done.")
         else:
             final_state = np.linalg.multi_dot(matrix_mul_list * iterations + [self.initial_state])
         
@@ -324,10 +327,13 @@ class QDriftSim:
 
         final_state = np.copy(self.initial_state)
         if self.use_density_matrices:
-            reversed = []
-            for mat in op_list:
-                reversed.insert(0, mat.conj().T)
+            reversed = op_list.copy()
+            reversed.reverse()
+            for ix in range(len(reversed)):
+                reversed[ix] = reversed[ix].conj().T
             final_state = np.linalg.multi_dot(op_list + [self.initial_state] + reversed)
+            if np.abs(np.abs(np.trace(final_state)) - np.abs(np.trace(self.initial_state))) > 1e-12:
+                print("[Trotter_sim.simulate] Error: significant non-trace preserving operation was done.")
         else:
             final_state = np.linalg.multi_dot(op_list + [self.initial_state])
 
@@ -552,7 +558,10 @@ class CompositeSim:
         h_qd = [self.qdrift_norms[ix] * self.qdrift_operators[ix] for ix in range(len(self.qdrift_norms))]
         h = sum(h_qd + h_trott)
         u = linalg.expm(1j * h * time)
-        return u @ self.initial_state
+        if self.use_density_matrices:
+            return u @ self.initial_state @ u.conj().T
+        else:
+            return u @ self.initial_state
 
 
 class LRsim: 

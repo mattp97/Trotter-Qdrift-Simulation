@@ -3,7 +3,6 @@ from asyncore import loop
 from mimetypes import init
 from operator import matmul
 # from telnetlib import AYT
-from cirq import sample
 import numpy as np
 import matplotlib.pyplot as plt
 import statistics
@@ -14,6 +13,7 @@ import math
 from numpy import arange, linspace, outer, random
 import cmath
 import time as time_this
+import scipy
 from sympy import S, symbols, printing
 from skopt import gp_minimize
 from skopt import gbrt_minimize
@@ -94,10 +94,14 @@ def initial_state_randomizer(hilbert_dim): #changed to sample each dimension fro
 
 #A function to calculate the trace distance between two numpy arrays (density operators)
 def trace_distance(rho, sigma):
+    # MATT H: I think the below is probably inefficient, no need to compute entire eigendecomposition when a square root + trace will work.
+    # diff = rho - sigma
+    # w, v = np.linalg.eigh(diff)
+    # dist = 1/2 * sum(np.abs(w))
+    # return dist
     diff = rho - sigma
-    w, v = np.linalg.eigh(diff)
-    dist = 1/2 * sum(np.abs(w))
-    return dist
+    tot = scipy.linalg.sqrtm(diff @ np.copy(diff).conj().T)
+    return 0.5 * np.abs(np.trace(tot)) # Note: absolute value after trace is because we have 'complex' variables, so taking the norm should be fine??
 
 def exact_time_evolution_density(hamiltonian_list, time, initial_rho):
     if len(hamiltonian_list) == 0:
@@ -127,7 +131,19 @@ def single_infidelity_sample(simulator, time, exact_final_state, iterations = 1,
     if type(simulator) == LRsim:
         sim_output = simulator.simulate(time, iterations)
 
-    infidelity = 1 - (np.abs(np.dot(exact_final_state.conj().T, sim_output)).flat[0])**2
+    if simulator.use_density_matrices == False:
+        infidelity = 1 - (np.abs(np.dot(exact_final_state.conj().T, sim_output)).flat[0])**2
+    else:
+        # check that shapes match
+        if exact_final_state.shape != sim_output.shape:
+            print("[single_infidelity_sample] tried computing density matrix infidelity with incorrect shapes.")
+            print("[single_infidelity_sample] exact output shape =", exact_final_state.shape, ", sim output shape =", sim_output.shape)
+            return 1.
+        exact_sqrt = scipy.linalg.sqrtm(exact_final_state)
+        tot_sqrt = scipy.linalg.sqrtm(np.linalg.multi_dot([exact_sqrt, sim_output, np.copy(exact_sqrt)]))
+        fidelity = np.abs(np.trace(tot_sqrt))
+        print("[single_infidelity_sample] fidelity:", fidelity)
+        infidelity = 1. - (np.abs(np.trace(tot_sqrt)) ** 2)
     return (infidelity, simulator.gate_count)
 
 # @profile
@@ -141,6 +157,33 @@ def multi_infidelity_sample(simulator, time, exact_final_state, iterations=1, nb
         for samp in range(mc_samples):
             ret.append(single_infidelity_sample(simulator, time, exact_final_state, iterations=iterations, nbsamples=nbsamples))
 
+    return ret
+
+def single_trace_distance_sample(simulator, time, exact_final_state, iterations=1, nbsamples=1):
+    if type(simulator) == QDriftSim:
+        sim_output = simulator.simulate(time, nbsamples)
+    else:
+        sim_output = simulator.simulate(time, iterations)
+    if simulator.use_density_matrices == False:
+        return trace_distance(np.outer(sim_output, np.copy(sim_output).conj().T), np.outer(exact_final_state, np.copy(exact_final_state).conj().T))
+    else:
+        return trace_distance(sim_output, exact_final_state)
+    
+
+def multi_trace_distance_sample(simulator, time, exact_final_state, iterations=1, nbsamples=1, mc_samples=MC_SAMPLES_DEFAULT):
+    ret = []
+    if type(simulator) == TrotterSim or len(simulator.qdrift_norms) == 0:
+        ret.append(single_trace_distance_sample(simulator, time, exact_final_state, iterations=iterations, nbsamples=nbsamples))
+        ret *= mc_samples
+    else:
+        sim_out =  np.zeros(simulator.initial_state.shape, dtype='complex128')
+        for _ in range(mc_samples):
+            sim_out += simulator.simulate(time, iterations)
+        sim_out /= mc_samples
+        if simulator.use_density_matrices == False:
+            ret =  trace_distance(np.outer(sim_out, np.copy(sim_out).conj().T), np.outer(exact_final_state, np.copy(exact_final_state).conj().T))
+        else:
+            ret = trace_distance(sim_out, exact_final_state)
     return ret
 
 def is_threshold_met(infidelities, threshold):
@@ -183,6 +226,8 @@ def get_iteration_bound(infidelity_fn, infidelity_bound, iter_bound, is_lower_bo
     return curr_guess
 
 # Performs exponential backoff to find iteration bounds
+# WARNING: With randomized composite channels there is a possibility this does not converge correctly. If you get a "good" sample at
+# a heuristic that should be bad then you will search for a lower bound until you exit.  
 # Inputs
 # - inf_fn: a callable that takes in an iteration and returns a list of infidelities to be fed into is_threshold_met
 # - infidelity_threshold: the threshold needed to be fed into is_threshold_met
@@ -197,6 +242,8 @@ def get_iteration_bounds(inf_fn, infidelity_threshold, heuristic, verbose=False)
             iter_lower = 5
             iter_upper = -1
     else:
+        # This is to help with randomized partitions (aka qdrift heavy)
+        heuristic = math.floor(0.8 * heuristic) 
         if is_threshold_met(inf_fn(heuristic), infidelity_threshold):
             iter_lower = -1
             iter_upper = heuristic
@@ -205,12 +252,13 @@ def get_iteration_bounds(inf_fn, infidelity_threshold, heuristic, verbose=False)
             iter_upper = -1
     curr_guess = max(iter_lower, iter_upper)
     if verbose:
-        print("[get_iteration_bounds] Beginning search with iter_lower, iter_upper, curr_guess:", iter_lower, ", ", iter_upper, ", ", curr_guess)
+        print("[get_iteration_bounds] Beginning search with iter_lower=", iter_lower, ", iter_upper=", iter_upper, ", curr_guess=",curr_guess)
     for i in range(ITERATION_BOUNDS_LOOP_DEPTH):
+        search_for_upper_bound = (iter_lower > 0) and (iter_upper < 0)
+        search_for_lower_bound = (iter_lower < 0) and (iter_upper > 0)
         if verbose:
             print("[get_iteration_bounds] iteration: ", i, ", current guess: ", curr_guess)
-        # Search for lower bound
-        if iter_lower <= 0 and iter_upper > 0:
+        if search_for_lower_bound:
             # step = min(100, math.floor(curr_guess / 2.0))
             step = int(curr_guess)
             new_guess = int(curr_guess - step)
@@ -220,23 +268,21 @@ def get_iteration_bounds(inf_fn, infidelity_threshold, heuristic, verbose=False)
             else:
                 # threshold was NOT met so we have found our iter_lower
                 iter_lower = new_guess
+                continue
 
-        # Search for upper bound
-        elif iter_lower > 0 and iter_upper <= 0:
+        elif search_for_upper_bound:
             # step = min(100, math.ceil(curr_guess * 2))
             step = math.ceil(curr_guess)
             new_guess = int(curr_guess + step)
             if is_threshold_met(inf_fn(new_guess), infidelity_threshold):
                 # upper bound needs to meet threshold so we are good
                 iter_upper = new_guess
+                continue
             else:
                 curr_guess = new_guess
-        elif iter_lower >= 1 and iter_upper >= 1:
+        else:
             return (iter_lower, iter_upper)
-        elif iter_lower <= 0 and iter_upper <= 0:
-            print("[get_iteration_bounds] found both bounds <= 0, resetting.")
-            iter_lower = 1
-            iter_upper = -1
+
     print("[get_iteration_bounds] Iteration depth reached, unclear what to do.")
     raise Exception("get_iteration_bounds")
 
@@ -315,6 +361,7 @@ def crossover_criteria_met(cost1, cost2):
 # partition2 - second partition to evaluate
 # time_left - left endpoint for search
 # time_right - right endpoint for search
+# Returns: either computed time or the best guess. Probably should fix this to indicate the cost difference between the partitions
 def find_crossover_time(simulator, partition1, partition2, time_left, time_right, inf_thresh=0.05, verbose=False):
     partition_sim(simulator, partition_type=partition1)
     cost_left_1, _ = find_optimal_cost(simulator, time_left, inf_thresh, verbose=verbose)
@@ -350,7 +397,8 @@ def find_crossover_time(simulator, partition1, partition2, time_left, time_right
         print("t_mid = ", t_mid)
         print("start_with_1 = ", start_with_1)
     for _ in range(COST_LOOP_DEPTH):
-        print("[find_crossover_time] evaluating midpoint: ", t_mid)
+        if verbose:
+            print("[find_crossover_time] evaluating midpoint: ", t_mid)
         t_mid = np.mean([t_upper, t_lower])
         partition_sim(simulator, partition_type=partition1)
         c1, _ = find_optimal_cost(simulator, t_mid, inf_thresh, verbose=verbose)
@@ -567,7 +615,7 @@ def partition_sim_gbrt_prob(simulator, time, epsilon):
         simulator.nb = nb
         return expected_cost(simulator, probs, time, epsilon)
     
-    result = gbrt_minimize(obj_fn, dimensions=dimensions, x0=[1.0]*len(hamiltonian) + [1], n_calls=20, verbose=True, acq_func="LCB")
+    result = gbrt_minimize(obj_fn, dimensions=dimensions, x0=[1.0]*len(hamiltonian) + [1], n_calls=20, verbose=True, acq_func="LCB", n_jobs=-1)
     print("results:")
     print("fun:", result.fun)
     print("x:", result.x)
