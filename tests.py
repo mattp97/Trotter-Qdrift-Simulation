@@ -240,24 +240,4 @@ class Experiment:
         print("[load_hamiltonian] loaded this many terms: ", len(ham_list))
         self.sim.set_hamiltonian(ham_list)
 
-def pickle_hamiltonian(output_path, unparsed_ham_list):
-    shape = unparsed_ham_list[0].shape
-    # convert to pickle'able datatype
-    to_pickle = [mat.tolist() for mat in unparsed_ham_list]
-    to_pickle.append(shape)
-    pickle.dump(to_pickle, open(output_path, 'wb'))
 
-def hamiltonian_entry_point():
-    if len(sys.argv) == 3:
-        ham_path = sys.argv[2]
-    else:
-        print("[hamiltonian_entry_point] No hamiltonian store path provided. quitting.")
-        sys.exit()
-    graph_path = ham_path + "/graph_4_2_1.pickle"
-    if os.path.exists(graph_path):
-        print("[hamiltonian_entry_point] graph_4_2_1.pickle exists")
-        sys.exit()
-    else:
-        print("[hamiltonian_entry_point] no file found, using this as file path: ", graph_path)
-    ham_list = graph_hamiltonian(4,2,1)
-    pickle_hamiltonian(graph_path, ham_list)
