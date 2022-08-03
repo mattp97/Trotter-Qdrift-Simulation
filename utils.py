@@ -84,13 +84,13 @@ def graph_hamiltonian(x_dim, y_dim, rng_seed):
 # MH - This is not a good way to sample a uniform random state from high dimensional hilbert spaces, you get
 #    "measure concentration" around specific directions. For small dims should work fine, for large dims tread
 #    cautiously.
-# def initial_state_randomizer(hilbert_dim):
-#     initial_state = []
-#     x = np.random.random(hilbert_dim)
-#     y = np.random.random(hilbert_dim)
-#     initial_state = x + (1j * y) 
-#     initial_state_norm = initial_state / np.linalg.norm(initial_state)
-#     return initial_state_norm
+def initial_state_randomizer(hilbert_dim): #changed to sample each dimension from a gaussain
+     initial_state = []
+     x = np.random.normal(hilbert_dim)
+     y = np.random.normal(hilbert_dim)
+     initial_state = x + (1j * y) 
+     initial_state_norm = initial_state / np.linalg.norm(initial_state)
+     return initial_state_norm
 
 #A function to calculate the trace distance between two numpy arrays (density operators)
 def trace_distance(rho, sigma):
@@ -490,7 +490,7 @@ def partition_sim_prob(simulator, time, epsilon, nb_scaling, optimize):
             self.nb = nb_high
     return 0
 
-def partition_sim_optimize(simulator):
+def partition_sim_optimize(simulator, weight_threshold):
     if simulator.nb_optimizer == True: #if Nb is a parameter we wish to numerically optimize
         guess = [0.5 for x in range(len(simulator.spectral_norms))] #guess for the weights 
         guess.append(2) #initial guess for Nb
@@ -658,7 +658,9 @@ def sample_decider(simulator, time, samples, iterations, mc_sample_guess, epsilo
             sample_guess *= 2
     return int(sample_guess/2)
 
-def hamiltonian_localizer_1d(local_hamiltonian, sub_block_size, sub_blocks = 1):
+########################## LR Functions ###########################
+
+def hamiltonian_localizer_1d(local_hamiltonian, sub_block_size):
     #A function to do an m=1 block decomposition of a nearest neighbour hamiltonian. Takes a tupel as input where 
     # indices 0, 1, 2 are the Hamiltonian terms, 1d lattice indices, and legnth of the lattice respectfully.
     #The funciton outputs 3 new "local" lists that can then be partitioned
@@ -672,29 +674,35 @@ def hamiltonian_localizer_1d(local_hamiltonian, sub_block_size, sub_blocks = 1):
     if start < 1:
         raise Exception("sub block is the size of or larger than the Hamiltonian")
     
+    temp_norms = []
+    for k in terms:
+        temp_norms.append(np.linalg.norm(k, ord=np.inf)) #spectral norm
+    
+    h = max(temp_norms) #normalization factor (LR algorithm requires spectral norm < 1)
+    
     ix = 0
     while ix < len(terms): 
         if not set(indices[ix]).isdisjoint(arange(start, stop)) == True: #Y region
-            y_terms.append(terms[ix].conj().T)
+            y_terms.append(1/h * terms[ix].conj().T)
             y_index.append(indices[ix])
 
         if not set(indices[ix]).isdisjoint(arange(start, len(terms))) == True: #B region
-            b_terms.append(terms[ix])
+            b_terms.append(1/h *terms[ix])
             b_index.append(indices[ix])
 
         if not set(indices[ix]).isdisjoint(arange(0, stop)): #A region
-            a_terms.append(terms[ix])
+            a_terms.append(1/h * terms[ix])
             a_index.append(indices[ix])
         ix += 1
     if ((len(a_terms) == 0) or (len(b_terms) == 0) or (len(y_terms) == 0)):
         raise Exception("poor block choice, one of the blocks is empty")
-    return (a_terms, y_terms, b_terms)
+    return (np.array(a_terms), np.array(y_terms), np.array(b_terms))
 
 def local_partition(simulator, partition, weights = None, time = 0.01, epsilon = 0.001): #weights is a list with ordering A, Y, B
         if type(simulator) != LRsim: raise TypeError("only works on LRsims")
         if partition == "chop":
             local_chop(simulator, weights)
-        if partition == "optimal_chop":
+        elif partition == "optimal_chop":
             optimal_local_chop(simulator, time, epsilon)
         else:
             raise Exception("this is not a valid partition")
@@ -707,9 +715,9 @@ def local_chop(simulator, weights):
         b_temp = []
         for j in range(len(simulator.spectral_norms[i])):
             if simulator.spectral_norms[i][j] >= weights[i]:
-                a_temp.append(simulator.spectral_norms[i][j])
+                a_temp.append(simulator.local_hamiltonian[i][j]) ###should be appending terms not the spectral norms
             else:
-                b_temp.append(simulator.spectral_norms[i][j])
+                b_temp.append(simulator.local_hamiltonian[i][j])
             
         simulator.internal_sims[i].set_partition(a_temp, b_temp)
     return 0
