@@ -153,7 +153,7 @@ class Experiment:
                         print("[run_trace_distance] on state sample: ", _)
                     self.sim.randomize_initial_state()
                     exact_final_state = self.sim.simulate_exact_output(t)
-                    mc_dist = multi_trace_distance_sample(self.sim, t, exact_final_state, mc_samples=1000)
+                    mc_dist = multi_trace_distance_sample(self.sim, t, exact_final_state, mc_samples=5000)
                     if self.verbose:
                         print("[run_trace_distance] observed monte carlo avg dist: ", np.mean(mc_dist), " +- ", np.std(mc_dist))
                     per_state_out.append(np.mean(mc_dist))
