@@ -758,16 +758,18 @@ def local_partition(simulator, partition, weights = None, time = 0.01, epsilon =
 
 def local_chop(simulator, weights):
     if type(simulator) != LRsim: raise TypeError("only works on LRsims")
-    for i in range(len(simulator.spectral_norms)):
+    for i in range(3):
         a_temp = []
         b_temp = []
-        for j in range(len(simulator.spectral_norms[i])):
+        for j in range(len(simulator.local_hamiltonian[i])):
             if simulator.spectral_norms[i][j] >= weights[i]:
                 a_temp.append(simulator.local_hamiltonian[i][j]) ###should be appending terms not the spectral norms
             else:
                 b_temp.append(simulator.local_hamiltonian[i][j])
             
         simulator.internal_sims[i].set_partition(a_temp, b_temp)
+        print("block " + str(i) + " has " + str(len(simulator.internal_sims[i].trotter_norms)) + 
+            " trotter terms and " + str(len(simulator.internal_sims[i].qdrift_norms)) + " qdrift terms")
     return 0
 
 def optimal_local_chop(simulator, time, epsilon): ### needs exact cost function to be operational

@@ -583,16 +583,20 @@ class LRsim:
         self.hilbert_dim = hamiltonian_list[0].shape[0] 
         self.rng_seed = rng_seed
 
-        self.comp_sim_A = CompositeSim(hamiltonian_list = local_hamiltonian[0], inner_order=inner_order, outer_order=1, use_density_matrices=True)
-        self.comp_sim_Y = CompositeSim(hamiltonian_list = local_hamiltonian[1], inner_order=inner_order, outer_order=1, use_density_matrices=True)
-        self.comp_sim_B = CompositeSim(hamiltonian_list = local_hamiltonian[2], inner_order=inner_order, outer_order=1, use_density_matrices=True)
+        self.comp_sim_A = CompositeSim(hamiltonian_list = self.local_hamiltonian[0], inner_order=inner_order, outer_order=1, use_density_matrices=True)
+        self.comp_sim_Y = CompositeSim(hamiltonian_list = self.local_hamiltonian[1], inner_order=inner_order, outer_order=1, use_density_matrices=True)
+        self.comp_sim_B = CompositeSim(hamiltonian_list = self.local_hamiltonian[2], inner_order=inner_order, outer_order=1, use_density_matrices=True)
 
         self.internal_sims = [self.comp_sim_A, self.comp_sim_Y, self.comp_sim_B]
 
         np.random.seed(self.rng_seed)
+        #Set the nb for each sim
         self.nb = nb
         if type(self.nb) != type([]): raise TypeError("nb is a list that requires input for each local block")
+        for l in range(len(self.nb)):
+            self.internal_sims[l].nb = self.nb[l]
 
+        #create a list of lists for spectral norms
         for i in range(len(self.local_hamiltonian)):
             temp = []
             for j in range(len(self.local_hamiltonian[i])):
@@ -624,11 +628,11 @@ class LRsim:
 
         self.comp_sim_Y.set_initial_state(current_state)
         current_state = self.comp_sim_Y.simulate(time, iterations)
-        self.gate_count += self.comp_sim_A.gate_count
+        self.gate_count += self.comp_sim_Y.gate_count
 
         self.comp_sim_B.set_initial_state(current_state)
         current_state = self.comp_sim_B.simulate(time, iterations)
-        self.gate_count += self.comp_sim_A.gate_count
+        self.gate_count += self.comp_sim_B.gate_count
 
         self.final_state = current_state
         return np.copy(self.final_state)
