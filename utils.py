@@ -467,35 +467,45 @@ def partition_sim(simulator, partition_type = "prob", chop_threshold = 0.5, opti
 
     if partition_type == "prob":
         partition_sim_prob(simulator, time, epsilon, nb_scaling, optimize)
-    
+        simulator.partition_type = "prob"
+
     elif partition_type == "optimize":
         partition_sim_optimize(simulator)
+        simulator.partition_type = "optimize"
     
     elif partition_type == "random":
         partition_sim_random(simulator)
+        simulator.partition_type = "random"
     
     elif partition_type == "chop":
         partition_sim_chop(simulator, chop_threshold)
+        simulator.partition_type = "chop"
     
     elif partition_type == "optimal_chop":
         partition_sim_optimal_chop(simulator, time, epsilon)
+        simulator.partition_type = "optimal_chop"
 
     elif partition_type == "trotter":
         partition_sim_trotter(simulator)
+        simulator.partition_type = "trotter"
     
     elif partition_type == "first_order_trotter":
         simulator.set_trotter_order(1)
         partition_sim_trotter(simulator)
+        simulator.partition_type = "trotter"
     
     elif partition_type == "second_order_trotter":
         simulator.set_trotter_order(2)
         partition_sim_trotter(simulator)
+        simulator.partition_type = "trotter"
 
     elif partition_type == "qdrift":
         partition_sim_qdrift(simulator)
+        simulator.partition_type = "qdrift"
     
     elif partition_type == "gbrt_prob":
         partition_sim_gbrt_prob(simulator, time, epsilon)
+        simulator.partition_type = "gbrt_prob"
     
     else:
         print("[partition_sim] Did not recieve valid partition. Valid options are: 'prob', 'optimize', 'random', 'chop', 'optimal_chop', 'trotter', and 'qdrift'.")
@@ -724,7 +734,7 @@ def hamiltonian_localizer_1d(local_hamiltonian, sub_block_size):
     
     temp_norms = []
     for k in terms:
-        temp_norms.append(np.linalg.norm(k, ord=np.inf)) #spectral norm
+        temp_norms.append(np.linalg.norm(k, ord=2)) 
     
     h = max(temp_norms) #normalization factor (LR algorithm requires spectral norm < 1)
     
@@ -750,11 +760,39 @@ def local_partition(simulator, partition, weights = None, time = 0.01, epsilon =
         if type(simulator) != LRsim: raise TypeError("only works on LRsims")
         if partition == "chop":
             local_chop(simulator, weights)
+            simulator.partition_type = "chop"
         elif partition == "optimal_chop":
             optimal_local_chop(simulator, time, epsilon)
+            simulator.partition_type = "optimal_chop"
+        elif partition == "trotter":
+            local_trotter(simulator)
+            simulator.partition_type = "trotter"
+        elif partition == "qdrift":
+            local_qdrift(simulator)
+            simulator.partition_type = "qdrift"
         else:
             raise Exception("this is not a valid partition")
         return 0
+
+def local_trotter(simulator):
+    if type(simulator) != LRsim: raise TypeError("only works on LRsims")
+    for i in range(3):
+        a_temp = []
+        b_temp = []
+        for j in range(len(simulator.local_hamiltonian[i])):
+            a_temp.append(simulator.local_hamiltonian[i][j])
+        simulator.internal_sims[i].set_partition(a_temp, b_temp)
+    return 0
+
+def local_qdrift(simulator):
+    if type(simulator) != LRsim: raise TypeError("only works on LRsims")
+    for i in range(3):
+        a_temp = []
+        b_temp = []
+        for j in range(len(simulator.local_hamiltonian[i])):
+            b_temp.append(simulator.local_hamiltonian[i][j])
+        simulator.internal_sims[i].set_partition(a_temp, b_temp)
+    return 0
 
 def local_chop(simulator, weights):
     if type(simulator) != LRsim: raise TypeError("only works on LRsims")
@@ -768,47 +806,62 @@ def local_chop(simulator, weights):
                 b_temp.append(simulator.local_hamiltonian[i][j])
             
         simulator.internal_sims[i].set_partition(a_temp, b_temp)
+        
         print("block " + str(i) + " has " + str(len(simulator.internal_sims[i].trotter_norms)) + 
             " trotter terms and " + str(len(simulator.internal_sims[i].qdrift_norms)) + " qdrift terms")
+    simulator.partition_type = "local_chop"
     return 0
 
 def optimal_local_chop(simulator, time, epsilon): ### needs exact cost function to be operational
     if type(simulator) != LRsim: raise TypeError("only works on LRsims")
-    w_guess = [] 
-    nb_guess = []
+    guess_points = []
     dimensions = []
-    dim1 = []
-    dim2 = []
-    for i in range(len(simulator.spectral_norms)):
-        w_guess.append(statistics.median(simulator.spectral_norms[i]))
-        nb_guess.append(int(len(simulator.spectral_norms[i])))
+    nb_a = Integer(name = "nb_a", low=1, high = len(simulator.spectral_norms[0] * 10))
+    nb_y = Integer(name="nb_y", low=1, high = len(simulator.spectral_norms[1] * 10))
+    nb_b = Integer(name="nb_b", low=1, high = len(simulator.spectral_norms[2] * 10))
+    w_a = Real(name = "w_a", low=0, high = max(simulator.spectral_norms[0]))
+    w_y = Real(name = "w_y", low=0, high = max(simulator.spectral_norms[1]))
+    w_b = Real(name = "w_b", low=0, high = max(simulator.spectral_norms[2]))
 
-        dim1.append(Real(name = "weight_"+str(i), low=0, high = max(simulator.spectral_norms)))
-        dim2.append(Integer(name="nb_"+str(i), low=1, high = len(simulator.spectral_norms * 10)))
+    for i in range(3):
+        guess_points.append(statistics.median(simulator.spectral_norms[i]))
+    for j in range(3):
+        guess_points.append(int(len(simulator.spectral_norms[j])))
 
-    guess_points = [w_guess, nb_guess]
-    dimensions = [dim1, dim2]
+    dimensions = [nb_a, nb_y, nb_b, w_a, w_y, w_b]
 
     @use_named_args(dimensions=dimensions)
-    def obj_func():
-        set_local_nb(simulator, nb_list)
-        local_chop(simulator, time, epsilon)
-        return exact_cost(simulator, time, epsilon)
+    def obj_func(nb_a, nb_y, nb_b, w_a, w_y, w_b):
+        nb_list = [nb_a, nb_y, nb_b]
+        weights = [w_a, w_y, w_b]
+        #set_local_nb(simulator, nb_list)
+        local_partition(simulator, partition = "chop", weights=weights, time=time, epsilon=epsilon)
+        return exact_cost(simulator, time, nb_list, epsilon)
     
     gbrt_minimize(func=obj_func,dimensions=dimensions, n_calls=20, n_initial_points = 5, 
-                random_state=4, verbose = False, acq_func = "LCB", x0 = guess_points)
+                random_state=4, verbose = True, acq_func = "LCB", x0 = guess_points)
     return 0
 
-def exact_cost(simulator, time, epsilon): #relies on the use of density matrices
+def exact_cost(simulator, time, nb, epsilon): #relies on the use of density matrices
+    if type(simulator.partition_type) == type(None): raise TypeError("call a partition function before calling this function")
     if type(simulator) == (CompositeSim): 
-        if simulator.partition == "qdrift":
-            get_trace_dist = lambda x : sim_trace_distance(time, iterations=1, nb = x)
-        elif simulator.partition == 'trotter':
-            get_trace_dist = lambda x : sim_trace_distance(time, iterations=x, nb = 1)
+        if type(nb) != int: raise TypeError("this requires a single integer nb")
+        simulator.nb = nb #redundancy
+        if simulator.partition_type == "qdrift":
+            get_trace_dist = lambda x : sim_trace_distance(simulator=simulator, time=time, iterations=1, nb = x)
+        elif simulator.partition_type == 'trotter':
+            get_trace_dist = lambda x : sim_trace_distance(simulator=simulator, time=time, iterations=x, nb = 1)
         else: 
-            get_trace_dist = lambda x : sim_trace_distance(time, iterations=x, nb = simulator.nb)
-    if type(simulator) == LRsim:
-        get_trace_dist = lambda x: sim_trace_distance(time, iterations=x, nb = simulator.nb)
+            get_trace_dist = lambda x : sim_trace_distance(simulator=simulator, time=time, iterations=x, nb = simulator.nb)
+    elif type(simulator) == (LRsim):
+        if type(nb) != type([]): raise TypeError("this requires a list of nbs")
+        set_local_nb(simulator, nb) #redundancy
+        if simulator.partition_type == "qdrift":
+            get_trace_dist = lambda x : sim_trace_distance(simulator=simulator, time=time, iterations=1, nb = x)
+        elif simulator.partition_type == 'trotter':
+            get_trace_dist = lambda x : sim_trace_distance(simulator=simulator, time=time, iterations=x, nb = 1)
+        else: 
+            get_trace_dist = lambda x : sim_trace_distance(simulator=simulator, time=time, iterations=x, nb = simulator.nb)
     else: raise TypeError("only works on LR and Composite Sims")
         
     lower_bound = 1
@@ -852,8 +905,11 @@ def exact_cost(simulator, time, epsilon): #relies on the use of density matrices
     get_trace_dist(mid)
     return simulator.gate_count
 
-def sim_trace_distance(simulator, time, iterations, nb): #put nb in here and unparsed
-    if type(simulator) == TrotterSim:
+def sim_trace_distance(simulator, time, iterations, nb = None): 
+    #this fucntion has redundancy with the handelling of nb with respect to exact cost
+    if type(simulator) == CompositeSim:
+        if type(nb) == type(None): raise TypeError("required to set an nb")
+        simulator.nb = nb
         return trace_distance(simulator.simulate(time, iterations), exact_time_evolution(simulator.hamiltonian_list, 
                             time, simulator.initial_state))
 
@@ -863,14 +919,17 @@ def sim_trace_distance(simulator, time, iterations, nb): #put nb in here and unp
         return trace_distance(simulator.simulate(time, iterations), exact_time_evolution(simulator.hamiltonian_list, 
                             time, simulator.initial_state))
 
-    else: #TODO incorporate samples into this framework -- just call composite sim and set the partition and nb :)
-        return trace_distance(simulator.simulate(time, iterations), exact_time_evolution(simulator.hamiltonian_list, 
-                            time, simulator.initial_state))
+    else: raise Exception("only defined for CompSim and LRsim")
+    #the nb handeling here is a bit redundant when we look at the fact that it is first handeled in the objective function of
+    #local optimal chop
  
-def set_local_nb(simulator, nb_list):
+def set_local_nb(simulator, nb_list): #is chop using this 
     if type(simulator) != LRsim: raise TypeError("only works on LRsims")
-    for i in simulator.internal_sims:
+    for i in range(3):
         simulator.internal_sims[i].nb = nb_list[i]
+
+#TODO fix the handeling of nb, check that sim trace distance is using density matrices or apply it. Make sure 
+# we construct the exact denwity matrix when using exact cost.
 
 
 def test():
