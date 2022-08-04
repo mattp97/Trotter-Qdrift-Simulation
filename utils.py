@@ -142,7 +142,7 @@ def single_infidelity_sample(simulator, time, exact_final_state, iterations = 1,
         exact_sqrt = scipy.linalg.sqrtm(exact_final_state)
         tot_sqrt = scipy.linalg.sqrtm(np.linalg.multi_dot([exact_sqrt, sim_output, np.copy(exact_sqrt)]))
         fidelity = np.abs(np.trace(tot_sqrt))
-        print("[single_infidelity_sample] fidelity:", fidelity)
+        # print("[single_infidelity_sample] fidelity:", fidelity)
         infidelity = 1. - (np.abs(np.trace(tot_sqrt)) ** 2)
     return (infidelity, simulator.gate_count)
 
@@ -186,57 +186,23 @@ def multi_trace_distance_sample(simulator, time, exact_final_state, iterations=1
             ret = trace_distance(sim_out, exact_final_state)
     return ret
 
-def is_threshold_met(infidelities, threshold):
-    mean = np.mean(infidelities)
-    std_dev = np.std(infidelities)
-
-    if threshold > mean + 2 * std_dev:
-        return True
-    else:
-        return False
-
 def exact_time_evolution(hamiltonian_list, time, initial_state):
     if len(hamiltonian_list) == 0:
         print("[exact_time_evolution] pls give me hamiltonian")
         return 1
-
     return linalg.expm(1j * sum(hamiltonian_list) * time) @ initial_state
-
-# Performs an exponential backoff to find an iteration bound (upper or lower)
-# Inputs
-# infidelity_fn: a callable that returns a list of infidelities to be fed into is_threshold_met
-# infidelity_bound: the infidelity_threshold needed for is_threshold_met
-# iter_bound: the current guess for the iteration bound
-# is_lower_bound: boolean to tell you if we are trying to search for an upper or lower bound
-# returns - The first value it finds that satisfies the upper/lower bound invariant
-def get_iteration_bound(infidelity_fn, infidelity_bound, iter_bound, is_lower_bound):
-    curr_guess = iter_bound
-    for i in range(COST_LOOP_DEPTH):
-        if is_threshold_met(infidelity_fn(curr_guess), infidelity_bound):
-            if is_lower_bound:
-                curr_guess = math.ceil(curr_guess / 2)
-            else:
-                return curr_guess
-        else:
-            if is_lower_bound:
-                return curr_guess
-            else:
-                curr_guess = int(curr_guess * 2)
-    print("[get_iteration_bound] Iteration upper bound exceeded. Proceed with caution.")
-    return curr_guess
 
 # Performs exponential backoff to find iteration bounds
 # WARNING: With randomized composite channels there is a possibility this does not converge correctly. If you get a "good" sample at
 # a heuristic that should be bad then you will search for a lower bound until you exit.  
 # Inputs
-# - inf_fn: a callable that takes in an iteration and returns a list of infidelities to be fed into is_threshold_met
-# - infidelity_threshold: the threshold needed to be fed into is_threshold_met
+# - is_iteration_good: a callable that takes in an iteration and returns a boolean if threshold is met
 # - heuristic: the guess as to where a good place to start is
 # Returns:
 # (iter_lower, iter_upper)
-def get_iteration_bounds(inf_fn, infidelity_threshold, heuristic, verbose=False):
+def get_iteration_bounds(is_iteration_good, heuristic, verbose=False):
     if heuristic < 10:
-        if is_threshold_met(inf_fn(10), infidelity_threshold):
+        if is_iteration_good(10):
             return (0, 10)
         else:
             iter_lower = 5
@@ -244,7 +210,7 @@ def get_iteration_bounds(inf_fn, infidelity_threshold, heuristic, verbose=False)
     else:
         # This is to help with randomized partitions (aka qdrift heavy)
         heuristic = math.floor(0.8 * heuristic) 
-        if is_threshold_met(inf_fn(heuristic), infidelity_threshold):
+        if is_iteration_good(heuristic):
             iter_lower = -1
             iter_upper = heuristic
         else:
@@ -262,7 +228,7 @@ def get_iteration_bounds(inf_fn, infidelity_threshold, heuristic, verbose=False)
             # step = min(100, math.floor(curr_guess / 2.0))
             step = int(curr_guess)
             new_guess = int(curr_guess - step)
-            if is_threshold_met(inf_fn(new_guess), infidelity_threshold):
+            if is_iteration_good(new_guess):
                 # lower bound requires the threshold to NOT be met
                 curr_guess = new_guess
             else:
@@ -274,7 +240,7 @@ def get_iteration_bounds(inf_fn, infidelity_threshold, heuristic, verbose=False)
             # step = min(100, math.ceil(curr_guess * 2))
             step = math.ceil(curr_guess)
             new_guess = int(curr_guess + step)
-            if is_threshold_met(inf_fn(new_guess), infidelity_threshold):
+            if is_iteration_good(new_guess):
                 # upper bound needs to meet threshold so we are good
                 iter_upper = new_guess
                 continue
@@ -294,30 +260,37 @@ def get_iteration_bounds(inf_fn, infidelity_threshold, heuristic, verbose=False)
 #              of samples is varied. If a Composite simulator is used then iterations is varied while QDrift
 #              samples are held fixed.
 # - mc_samples: Monte Carlo samples for wave function states, shouldn't be necessary with density matrices?
-# Returns (cost, iterations) - a tuple consisting of the gate cost and number of iterations needed to satisfy is_threshold_met 
-def find_optimal_cost(simulator, time, infidelity_threshold, heuristic = -1, mc_samples=MC_SAMPLES_DEFAULT, verbose=False):
-    hamiltonian_list = simulator.get_hamiltonian_list()
-    exact_final_state = simulator.simulate_exact_output(time)
-
+# Returns (cost, iterations) - a tuple consisting of the gate cost and number of iterations needed to satisfy the infidelity_threshold
+def find_optimal_cost(simulator, time, infidelity_threshold, heuristic = -1, mc_samples=MC_SAMPLES_DEFAULT, num_state_samples=10, verbose=False):
     if verbose:
         print("*" * 75)
         print("[find_optimal_cost] computing cost for simulator with partitioning:")
         simulator.print_partition()
-        print("[find_optimal_cost] time, infidelity_threshold: ", time, infidelity_threshold)
-    # now we can simplify infidelity to nice lambda, NOTE get_inf_and_cost returns a TUPLE 
-    if type(simulator) == TrotterSim or type(simulator) == CompositeSim or type(simulator) == LRsim:
-        get_inf_and_cost = lambda x: multi_infidelity_sample(simulator, time, exact_final_state, iterations = x, mc_samples=mc_samples)
-    elif type(simulator) == QDriftSim:
-        get_inf_and_cost = lambda x: multi_infidelity_sample(simulator, time, exact_final_state, nbsamples= x, mc_samples=mc_samples)
+        print("[find_optimal_cost] time = ", time, ", infidelity_threshold =", infidelity_threshold)
+
+    # Helper function to average over random initial states and perform monte carlo averaging for infidelity.
+    def get_inf_avg_std_cost(iterations):
+        inf_avg_tot, inf_std_tot, cost_tot = 0, 0, 0
+        for _ in range(num_state_samples):
+            simulator.randomize_initial_state()
+            exact_final_state = simulator.simulate_exact_output(time)
+            if type(simulator) == QDriftSim:
+                infs, costs = zip(*multi_infidelity_sample(simulator, time, exact_final_state, nbsamples=iterations, mc_samples=mc_samples))
+            else:
+                infs, costs = zip(*multi_infidelity_sample(simulator, time, exact_final_state, iterations=iterations, mc_samples=mc_samples))
+            inf_avg_tot += np.mean(infs)
+            inf_std_tot += np.std(infs)
+            cost_tot += np.mean(costs)
+        return (inf_avg_tot / num_state_samples, inf_std_tot / num_state_samples, cost_tot / num_state_samples)
+            
+    def is_iteration_good(iter):
+        avg, std, _ = get_inf_avg_std_cost(iter)
+        return infidelity_threshold > avg + 2 * std
     
-    def get_inf(x):
-        inf_tup, _ = zip(*get_inf_and_cost(x))
-        return list(inf_tup)
-    
-    iter_lower, iter_upper = get_iteration_bounds(get_inf, infidelity_threshold, heuristic, verbose=verbose)
+    iter_lower, iter_upper = get_iteration_bounds(is_iteration_good, heuristic, verbose=verbose)
 
     if verbose:
-        print("[find_optimal_cost] found iteration bounds - lower, upper:", iter_lower, ", ", iter_upper)
+        print("[find_optimal_cost] found iteration bounds: lower = ", iter_lower, ", upper =", iter_upper)
     # bisection search until we find it.
     mid = 1
     count = 0
@@ -328,23 +301,21 @@ def find_optimal_cost(simulator, time, infidelity_threshold, heuristic = -1, mc_
         iters = math.ceil(mid)
         
         if verbose:
-            print("[find_optimal_cost] searching midpoint: ", mid)
+            print("[find_optimal_cost] searching midpoint: ", iters)
 
-        inf_tup, costs = zip(*get_inf_and_cost(iters))
-        infidelities = list(inf_tup)
-        # upper bounds always satisfy the threshold. 
-        if is_threshold_met(infidelities, infidelity_threshold):
+        # upper bounds always satisfy the threshold.
+        if is_iteration_good(iters):
             iter_upper = iters
         else:
             iter_lower = iters
     if count == COST_LOOP_DEPTH:
         print("[find_optimal_cost] Reached loop depth, results may be inaccurate")
-    ret = get_inf_and_cost(iter_upper)
-    inf_tup, costs = zip(*ret)
+    ret = get_inf_avg_std_cost(iter_upper) # a tuple of inf_mean, inf_std, and cost
     if verbose:
-        print("[find_optimal_cost] computed infidelity avg:", np.mean(list(inf_tup)))
-        print("[find_optimal_cost] iters, cost: ", iter_upper, ", ", np.mean(costs))
-    return (np.mean(costs), iter_upper)
+        print("[find_optimal_cost] converged to iterations = ", iter_upper)
+        print("[find_optimal_cost] final infidelity =", ret[0], " +- ", ret[1])
+        print("[find_optimal_cost] final gate cost: ", ret[-1])
+    return (ret[-1], iter_upper)
 
 def crossover_criteria_met(cost1, cost2):
     diff = np.abs(cost1 - cost2)

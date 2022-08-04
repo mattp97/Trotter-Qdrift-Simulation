@@ -63,19 +63,22 @@ def compute_entry_point():
         print("[tests.py] Error: could not find hamiltonian.pickle or settings.pickle")
         sys.exit()
     try:
-        ham_list = pickle.load(open(ham_path, 'rb'))
+        unprocessed = pickle.load(open(ham_path, 'rb'))
+        shape = unprocessed.pop(-1)
+        ham_list = [np.array(unprocessed[ix]).reshape(shape) for ix in range(len(unprocessed))]
         settings = pickle.load(open(settings_path, 'rb'))
     except:
         print("[compute_entry_point] you fool, we couldn't even unload the hamiltonian or settings")
         sys.exit()
-    print("[compute_entry_point] hamiltonian ", ham_path, " found with this many terms:", len(ham_list))
-    print("#" * 50)
-    print("settings found:")
-    print(settings)
+    print("[compute_entry_point] Found hamiltonian at path: ", ham_path)
+    print("[compute_entry_point] Contains this many terms: ", len(ham_list))
+    print("[compute_entry_point] Found the following settings at file path: ", settings_path)
+    for k,v in settings.items():
+        print(k, "=", v)
 
     exp = Experiment(base_directory=base_dir, use_density_matrices=settings.get("use_density_matrices", False))
-    exp.load_hamiltonian(ham_path)
-    exp.load_settings(settings_path)
+    exp.input_hamiltonian(ham_list)
+    exp.input_settings(settings)
     exp.run()
     print("[compute] time taken:", time_this.time() - clock_start, " (sec)")
 

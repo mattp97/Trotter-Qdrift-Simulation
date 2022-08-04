@@ -9,23 +9,24 @@ import pickle
 import os
 import shutil
 
-INFIDELITY_TEST_TYPE = "infidelity"
-TRACE_DIST_TEST_TYPE = "trace_distance"
-GATE_COST_TEST_TYPE = "gate_cost"
-CROSSOVER_TEST_TYPE = "crossover"
-LAUNCHPAD = "launchpad"
-MINIMAL_SETTINGS = ["experiment_label",
-                    "verbose",
-                    'use_density_matrices',
-                    't_start',
-                    't_stop',
-                    't_steps',
-                    'partitions',
-                    'infidelity_threshold',
-                    'num_state_samples',
-                    'base_directory',
-                    'test_type'
-]
+# INFIDELITY_TEST_TYPE = "infidelity"
+# TRACE_DIST_TEST_TYPE = "trace_distance"
+# GATE_COST_TEST_TYPE = "gate_cost"
+# CROSSOVER_TEST_TYPE = "crossover"
+# LAUNCHPAD = "launchpad"
+# MINIMAL_SETTINGS = ["experiment_label",
+                    # "verbose",
+                    # 'use_density_matrices',
+                    # 't_start',
+                    # 't_stop',
+                    # 't_steps',
+                    # 'partitions',
+                    # 'infidelity_threshold',
+                    # 'num_state_samples',
+                    # 'base_directory',
+                    # 'test_type',
+                    # 'mc_samples',
+# ]
 
 def setup_entry_point():
     if len(sys.argv) > 1:
@@ -54,9 +55,14 @@ def setup_manage_hamiltonians(base_dir):
     hamiltonian_base = base_dir + "hamiltonians/"
     hamiltonians = [f for f in os.listdir(hamiltonian_base) if os.path.isfile(hamiltonian_base + f)]
     print("[setup] found the following hamiltonian files")
-    print(hamiltonians)
-    user_input = input('[setup] which hamiltonian would you like to use? (Do not type \'.pickle\' extension): ')
-    return hamiltonian_base + user_input + '.pickle'
+    for i in range(len(hamiltonians)):
+        print("(" + str(i + 1) +") ", hamiltonians[i])
+    user_input = input('[setup] which hamiltonian would you like to use? >')
+    try:
+        return hamiltonian_base + hamiltonians[int(user_input) -1]
+    except:
+        print("[manage_hamiltonians] error: could not parse integer. Failing.")
+        sys.exit()
 
 # Assumes an input dictionary mapping strings of inputs to strings of values. converts them to proper data types for pickling.
 def process_settings_to_save(unprocessed_settings):
@@ -105,6 +111,9 @@ def process_settings_to_save(unprocessed_settings):
         if setting == 'test_type':
             val = unprocessed_settings.get(setting, "gate_cost")
             ret[setting] = val
+        if setting == 'mc_samples':
+            val = unprocessed_settings.get(setting, '10')
+            ret[setting] = int(val)
     return ret
 
 # RETURNS : path to the final configured settings file. 
@@ -118,9 +127,13 @@ def setup_manage_settings(base_dir):
     settings_base = base_dir + "settings/"
     settings_files = [f for f in os.listdir(settings_base) if os.path.isfile(settings_base + f)]
     print("[setup] found the following settings files")
-    print(settings_files)
-    settings_file = input("[setup] enter a settings name to start modifying (do not type \'.pickle\' extension) or leave empty for new: ")
-    settings_file += '.pickle'
+    for ix in range(len(settings_files)):
+        print("(" + str(ix + 1) + ")", settings_files[ix])
+    try:
+        index = int(input("[setup] enter a number or leave empty for new: "))
+        settings_file = settings_files[index - 1]
+    except:
+        settings_file = ''
     use_new_settings = (settings_file == "")
     settings = {}
     if use_new_settings == False:
@@ -150,7 +163,7 @@ def setup_manage_settings(base_dir):
                 var = user_input.split(" ")[-1]
                 del settings[var]
             except:
-                print("usage is 'clear <varname>' to clear, or <varname> is not in settings.")
+                print("usage is 'clear <varname>' to clear, or you tried to clear a variable is not in settings.")
                 continue
         elif user_input == "partitions":
             print("How many partitions?")

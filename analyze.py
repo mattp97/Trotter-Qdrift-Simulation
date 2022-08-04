@@ -84,6 +84,7 @@ def analyze_entry_point():
         plt.legend()
         plt.xlabel("times")
         plt.ylabel(results.get("test_type", ""))
+        plt.title(" ".join(results.get("experiment_label", "default_label").split("_")))
         plt.show()
 
 if __name__ == "__main__":
