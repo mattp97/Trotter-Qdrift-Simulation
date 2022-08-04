@@ -83,7 +83,7 @@ class Experiment:
                     cost, iters = find_optimal_cost(self.sim, t, self.infidelity_threshold, heuristic=heuristic, verbose=self.verbose)
                     heuristic = iters
                     out += cost
-                outputs.append(out / self.num_state_samples)
+                outputs.append((t, out / self.num_state_samples))
             results[partition] = outputs
         return results
     
@@ -104,12 +104,11 @@ class Experiment:
                         print("[run_infidelity] on state sample: ", _)
                     self.sim.randomize_initial_state()
                     exact_final_state = self.sim.simulate_exact_output(t)
-                    mc_inf, _ = zip(*multi_infidelity_sample(self.sim, t, exact_final_state, mc_samples=10))
-                    if self.verbose:
-                        print("[run_infidelity] observed monte carlo avg inf: ", np.mean(mc_inf), " +- ", np.std(mc_inf))
+                    mc_inf, _ = zip(*multi_infidelity_sample(self.sim, t, exact_final_state, mc_samples=self.mc_samples))
                     per_state_out.append(np.mean(mc_inf))
                 time_inf_tups.append((t, np.mean(per_state_out)))
-                print("[run_infidelity] average inf: ", np.mean(per_state_out))
+                if self.verbose:
+                    print("[run_infidelity] average inf over randomized initial states: ", np.mean(per_state_out), "+-", np.std(per_state_out))
             results[partition] = time_inf_tups
         return results
 
@@ -168,17 +167,22 @@ class Experiment:
         final_results = {}
         final_results["times"] = np.copy(self.times).tolist()
         final_results["test_type"] = self.test_type
+        final_results["use_density_matrices"] = self.use_density_matrices
+        final_results["num_state_samples"] = self.num_state_samples
+        final_results["mc_samples"] = self.mc_samples
+        final_results["infidelity_threshold"] = self.infidelity_threshold
+        final_results["partitions"] = self.partitions
+        final_results["experiment_label"] = self.experiment_label
         if self.test_type == INFIDELITY_TEST_TYPE:
-            out = self.run_infidelity()
+            final_results.update(self.run_infidelity())
         elif self.test_type == GATE_COST_TEST_TYPE:
-            out = self.run_gate_cost()
+            final_results.update(self.run_gate_cost())
         elif self.test_type == CROSSOVER_TEST_TYPE:
-            out = self.run_crossover()
+            final_results.update(self.run_crossover())
         elif self.test_type == OPTIMAL_PARTITION_TEST_TYPE:
-            out = self.run_optimal_partition()
+            final_results.update(self.run_optimal_partition())
         elif self.test_type == TRACE_DIST_TEST_TYPE:
-            out = self.run_trace_distance()
-        final_results.update(out)
+            final_results.update(self.run_trace_distance())
         self.results = final_results
         if self.base_directory[-1] != '/':
             self.base_directory += '/'
@@ -195,30 +199,10 @@ class Experiment:
             pickle.dump(final_results, open(output_dir + self.experiment_label + ".pickle", 'wb'))
             print("[Experiment.run] successfully wrote output to: ", output_dir + self.experiment_label + '.pickle')
         except:
-            print("[Experiment.run] ERROR: could not save output to:", self.base_directory + 'results.pickle')
+            print("[Experiment.run] ERROR: could not save output to:", output_dir + self.experiment_label + ".pickle")
 
-
-
-    # TODO: This isn't really necessary anymore with the setup scripts
-    def pickle_settings(self, output_path):
-        settings = {}
-        settings["experiment_label"] = self.experiment_label.get(EXPERIMENT_LABEL, DEFAULT_EXPERIMENT_LABEL)
-        settings["verbose"] = self.verbose
-        settings["use_density_matrices"] = self.use_density_matrices
-        settings["t_start"] = self.times[0]
-        settings["t_stop"] = self.times[-1]
-        settings["t_steps"] = len(self.times)
-        settings["partitions"] = self.partitions
-        settings["infidelity_threshold"] = self.infidelity_threshold
-        settings["num_state_samples"] = self.num_state_samples
-        settings["base_directory"] = self.base_directory
-        settings["test_type"] = self.test_type
-        pickle.dump(settings, open(output_path, 'wb'))
-
-    # given an exact absoulute path to a settings file, loads them into the experiment object. Note that we ensure defaults and formatting
-    # are handled on write, so loading should not have to use these defaults but do this out of precaution. 
-    def load_settings(self, settings_path):
-        settings = pickle.load(open(settings_path, 'rb'))
+    # Take in a processed dictionary
+    def input_settings(self, settings):
         self.experiment_label     = settings.get(EXPERIMENT_LABEL, "default_experiment_label")
         self.verbose              = settings.get("verbose", True)
         self.use_density_matrices = settings.get("use_density_matrices", False)
@@ -227,17 +211,8 @@ class Experiment:
         self.infidelity_threshold = settings.get("infidelity_threshold", 0.05)
         self.num_state_samples    = settings.get("num_state_samples", 5)
         self.test_type            = settings.get("test_type", GATE_COST_TEST_TYPE)
-        # Drop self.output_directory? if we can find the settings then just output there
+        self.mc_samples           = settings.get("mc_samples", 100)
 
-    # Inputs:
-    # - An absoluate path to a pickled hamiltonian file. converts to numpy array and makes sure simulator is loaded with that hamiltonian.
-    def load_hamiltonian(self, input_path):
-        unpickled = pickle.load(open(input_path, 'rb'))
-        output_shape = unpickled[-1]
-        ham_list = []
-        for ix in range(len(unpickled) - 1):
-            ham_list.append(np.array(unpickled[ix]).reshape(output_shape))
-        print("[load_hamiltonian] loaded this many terms: ", len(ham_list))
-        self.sim.set_hamiltonian(ham_list)
-
-
+    # take in a processed hamiltonian list.
+    def input_hamiltonian(self, hamiltonian_list):
+        self.sim.set_hamiltonian(hamiltonian_list)
