@@ -54,9 +54,14 @@ def setup_manage_hamiltonians(base_dir):
     hamiltonian_base = base_dir + "hamiltonians/"
     hamiltonians = [f for f in os.listdir(hamiltonian_base) if os.path.isfile(hamiltonian_base + f)]
     print("[setup] found the following hamiltonian files")
-    print(hamiltonians)
-    user_input = input('[setup] which hamiltonian would you like to use? (Do not type \'.pickle\' extension): ')
-    return hamiltonian_base + user_input + '.pickle'
+    for i in range(len(hamiltonians)):
+        print("(" + str(i + 1) +") ", hamiltonians[i])
+    user_input = input('[setup] which hamiltonian would you like to use? >')
+    try:
+        return hamiltonian_base + hamiltonians[int(user_input) -1]
+    except:
+        print("[manage_hamiltonians] error: could not parse integer. Failing.")
+        sys.exit()
 
 # Assumes an input dictionary mapping strings of inputs to strings of values. converts them to proper data types for pickling.
 def process_settings_to_save(unprocessed_settings):

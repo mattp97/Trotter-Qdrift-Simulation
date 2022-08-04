@@ -142,7 +142,7 @@ def single_infidelity_sample(simulator, time, exact_final_state, iterations = 1,
         exact_sqrt = scipy.linalg.sqrtm(exact_final_state)
         tot_sqrt = scipy.linalg.sqrtm(np.linalg.multi_dot([exact_sqrt, sim_output, np.copy(exact_sqrt)]))
         fidelity = np.abs(np.trace(tot_sqrt))
-        print("[single_infidelity_sample] fidelity:", fidelity)
+        # print("[single_infidelity_sample] fidelity:", fidelity)
         infidelity = 1. - (np.abs(np.trace(tot_sqrt)) ** 2)
     return (infidelity, simulator.gate_count)
 

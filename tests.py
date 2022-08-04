@@ -125,7 +125,7 @@ class Experiment:
             return
         t1 = self.times[0]
         t2 = self.times[-1]
-        results["crossover"] = find_crossover_time(self.sim, p1, p2, t1, t2, verbose=self.verbose)
+        results["crossover"] = find_crossover_time(self.sim, p1, p2, t1, t2, inf_thresh=self.infidelity_threshold, verbose=self.verbose)
         return results
 
     def run_optimal_partition(self):
