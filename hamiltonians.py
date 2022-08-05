@@ -1,7 +1,10 @@
+#!/usr/bin/env python
+
 import sys
 import os
 import numpy as np
 import pickle
+from utils import *
 
 def pickle_hamiltonian(output_path, unparsed_ham_list):
     shape = unparsed_ham_list[0].shape
@@ -26,8 +29,8 @@ def unpickle_hamiltonian(path):
     
 
 def hamiltonian_entry_point():
-    scratch_path = os.getenv("$SCRATCH")
-    if len(scratch_path) <= 1:
+    scratch_path = os.getenv("SCRATCH")
+    if type(scratch_path) != type("string"):
         print("[hamiltonian] use scratch path, currently not set")
         sys.exit()
 
@@ -46,14 +49,9 @@ def hamiltonian_entry_point():
         except:
             print("could not make hamiltonian folder and it does not exist.")
             sys.exit()
-    filename = ham_path + "/" + ham_name + '.pickle'
-    for i in range(4,10):
-        ham_list = graph_hamiltonian(i, 1, 1)
+    for i in range(4,7):
+        ham_list = graph_hamiltonian(i, 1, i)
         pickle_hamiltonian(ham_path + "/graph_" + str(i) + "1.pickle", ham_list)
-
-    ham_list = graph_hamiltonian(4,2,1)
-    pickle_hamiltonian(graph_path, ham_list)
-
 
 if __name__ == "__main__":
     hamiltonian_entry_point()

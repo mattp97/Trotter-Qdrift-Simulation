@@ -83,8 +83,6 @@ def compute_trotter_timesteps(numTerms, simTime, trotterOrder = 1):
 #                     in the list is numpy matrix (preferably sparse, no guarantee on data struct
 #                     actually used). Ex: H = A + B + C + D --> hamiltonian_list = [A, B, C, D]
 #                     ASSUME SQUARE MATRIX INPUTS
-# - time: Floating point (no size guarantees) representing time for TOTAL simulation, NOT per
-#         iteration. "t" parameter in the literature.
 # - iterations: "r" parameter. This object will handle repeating the channel r times and dividing 
 #               overall simulation into t/r chunks.
 # - order: The trotter order, represented as "2k" in literature. 

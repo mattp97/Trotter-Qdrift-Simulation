@@ -116,12 +116,12 @@ class Experiment:
         results = {}
         if len(self.partitions) < 2:
             print("[run_crossover] Error: trying to compute crossover with less than two partitions. Bail.")
-            return
+            raise Exception("Crossover needs two partitions")
         p1 = self.partitions[0]
         p2 = self.partitions[1]
         if len(self.times) < 2:
             print("[run_crossover] Error: trying to compute crossover without enough endpoints. Bail.")
-            return
+            raise Exception("Crossover needs two time endpoints")
         t1 = self.times[0]
         t2 = self.times[-1]
         results["crossover"] = find_crossover_time(self.sim, p1, p2, t1, t2, inf_thresh=self.infidelity_threshold, verbose=self.verbose, mc_samples=self.mc_samples)
