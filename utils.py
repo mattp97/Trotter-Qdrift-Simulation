@@ -22,10 +22,10 @@ from skopt.utils import use_named_args
 import cProfile, pstats, io
 from compilers import CompositeSim, TrotterSim, QDriftSim, LRsim, profile, conditional_decorator
 
-MC_SAMPLES_DEFAULT = 10
+MC_SAMPLES_DEFAULT = 100
 COST_LOOP_DEPTH = 30
 ITERATION_BOUNDS_LOOP_DEPTH = 100 # specifies power of 2 for maximum number of iterations to search through
-CROSSOVER_CUTOFF_PERCENTAGE = 0.01
+CROSSOVER_CUTOFF_PERCENTAGE = 0.5
 POSSIBLE_PARTITIONS = ["first_order_trotter", "second_order_trotter", "qdrift"]
 
 # A simple function that computes the graph distance between two sites
@@ -333,13 +333,13 @@ def crossover_criteria_met(cost1, cost2):
 # time_left - left endpoint for search
 # time_right - right endpoint for search
 # Returns: either computed time or the best guess. Probably should fix this to indicate the cost difference between the partitions
-def find_crossover_time(simulator, partition1, partition2, time_left, time_right, inf_thresh=0.05, verbose=False):
+def find_crossover_time(simulator, partition1, partition2, time_left, time_right, inf_thresh=0.05, verbose=False, mc_samples=100):
     partition_sim(simulator, partition_type=partition1)
-    cost_left_1, _ = find_optimal_cost(simulator, time_left, inf_thresh, verbose=verbose)
-    cost_right_1, _ = find_optimal_cost(simulator, time_right, inf_thresh, verbose=verbose)
+    cost_left_1, _ = find_optimal_cost(simulator, time_left, inf_thresh, verbose=verbose, mc_samples=mc_samples)
+    cost_right_1, _ = find_optimal_cost(simulator, time_right, inf_thresh, verbose=verbose, mc_samples=mc_samples)
     partition_sim(simulator, partition_type=partition2)
-    cost_left_2, _ = find_optimal_cost(simulator, time_left, inf_thresh, verbose=verbose)
-    cost_right_2, _ = find_optimal_cost(simulator, time_right, inf_thresh, verbose=verbose)
+    cost_left_2, _ = find_optimal_cost(simulator, time_left, inf_thresh, verbose=verbose, mc_samples=mc_samples)
+    cost_right_2, _ = find_optimal_cost(simulator, time_right, inf_thresh, verbose=verbose, mc_samples=mc_samples)
 
     # Tells us if we start on the lower times with partition1 being cheaper than partition2
     start_with_1 = cost_left_1 < cost_left_2
@@ -366,15 +366,15 @@ def find_crossover_time(simulator, partition1, partition2, time_left, time_right
         print("t_lower = ", t_upper)
         print("t_upper = ", t_upper)
         print("t_mid = ", t_mid)
-        print("start_with_1 = ", start_with_1)
+        print("start_with_1 = ", start_with_1, flush=True)
     for _ in range(COST_LOOP_DEPTH):
         if verbose:
-            print("[find_crossover_time] evaluating midpoint: ", t_mid)
+            print("[find_crossover_time] evaluating midpoint: ", t_mid, flush=True)
         t_mid = np.mean([t_upper, t_lower])
         partition_sim(simulator, partition_type=partition1)
-        c1, _ = find_optimal_cost(simulator, t_mid, inf_thresh, verbose=verbose)
+        c1, _ = find_optimal_cost(simulator, t_mid, inf_thresh, verbose=verbose, mc_samples=mc_samples)
         partition_sim(simulator, partition_type=partition2)
-        c2, _ = find_optimal_cost(simulator, t_mid, inf_thresh, verbose=verbose)
+        c2, _ = find_optimal_cost(simulator, t_mid, inf_thresh, verbose=verbose, mc_samples=mc_samples)
         if crossover_criteria_met(c1, c2):
             return t_mid
         if start_with_1 and (c1 < c2):
