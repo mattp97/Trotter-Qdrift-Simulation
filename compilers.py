@@ -217,13 +217,14 @@ class TrotterSim:
 # - rng_seed: Seed for the random number generator so results are reproducible.
     
 class QDriftSim:
-    def __init__(self, hamiltonian_list = [], rng_seed = 1, use_density_matrices=False):
+    def __init__(self, hamiltonian_list = [], rng_seed = 1, use_density_matrices=False, exact_qd=False):
         self.hamiltonian_list = []
         self.spectral_norms = []
         self.rng_seed = rng_seed
         self.gate_count = 0
         self.exp_op_cache = dict()
         self.conj_cache = dict()
+        self.exact_qd=exact_qd #adding this to choose to build E[]
 
         # Use the first computational basis state as the initial state until the user specifies.
         self.prep_hamiltonian_lists(hamiltonian_list)
@@ -300,46 +301,50 @@ class QDriftSim:
         return samples
     
     def simulate(self, time, samples):
-        self.gate_count = 0
-        if samples == 0:
-            return np.copy(self.initial_state)
-        
-        if "time" in self.exp_op_cache:
-            if (self.exp_op_cache["time"] != time) or (self.exp_op_cache["samples"] != samples):
-                self.exp_op_cache.clear()
-                # WARNING: potential could allow for "time creep", by adjusting time 
-                # in multiple instances of FLOATING POINT PRECISION it could slowly
-                # drift from the time that the exponential operators used
-
-        if (len(self.hamiltonian_list) == 0): # or (len(self.hamiltonian_list) == 1) caused issues in comp sim
-            return np.copy(self.initial_state) #make the choice not to sample a lone qdrift term
-
-        tau = time * np.sum(self.spectral_norms) / (samples * 1.0)
-        self.exp_op_cache["time"] = time
-        self.exp_op_cache["samples"] = samples
-        obtained_samples = self.draw_hamiltonian_samples(samples)
-
-        op_list = []
-        for ix in obtained_samples:
-            if ix not in self.exp_op_cache:
-                self.exp_op_cache[ix] = linalg.expm(1.j * tau * self.hamiltonian_list[ix])
-            op_list.append(self.exp_op_cache[ix])
-
-        final_state = np.copy(self.initial_state)
-        if self.use_density_matrices:
-            reversed = op_list.copy()
-            reversed.reverse()
-            for ix in range(len(reversed)):
-                reversed[ix] = reversed[ix].conj().T
-            final_state = np.linalg.multi_dot(op_list + [self.initial_state] + reversed)
-            if np.abs(np.abs(np.trace(final_state)) - np.abs(np.trace(self.initial_state))) > 1e-12:
-                print("[Trotter_sim.simulate] Error: significant non-trace preserving operation was done.")
+        if self.exact_qd == True:
+            return self.construct_density(time, samples)
         else:
-            final_state = np.linalg.multi_dot(op_list + [self.initial_state])
+            self.gate_count = 0
+            if samples == 0:
+                return np.copy(self.initial_state)
+            
+            if "time" in self.exp_op_cache:
+                if (self.exp_op_cache["time"] != time) or (self.exp_op_cache["samples"] != samples):
+                    self.exp_op_cache.clear()
+                    # WARNING: potential could allow for "time creep", by adjusting time 
+                    # in multiple instances of FLOATING POINT PRECISION it could slowly
+                    # drift from the time that the exponential operators used
 
-        self.final_state = final_state
-        self.gate_count = samples
-        return final_state
+            if (len(self.hamiltonian_list) == 0): # or (len(self.hamiltonian_list) == 1) caused issues in comp sim
+                return np.copy(self.initial_state) #make the choice not to sample a lone qdrift term
+
+            tau = time * np.sum(self.spectral_norms) / (samples * 1.0)
+            self.exp_op_cache["time"] = time
+            self.exp_op_cache["samples"] = samples
+            obtained_samples = self.draw_hamiltonian_samples(samples)
+
+            op_list = []
+            for ix in obtained_samples:
+                if ix not in self.exp_op_cache:
+                    self.exp_op_cache[ix] = linalg.expm(1.j * tau * self.hamiltonian_list[ix])
+                op_list.append(self.exp_op_cache[ix])
+
+            final_state = np.copy(self.initial_state)
+            if self.use_density_matrices:
+                reversed = op_list.copy()
+                reversed.reverse()
+                for ix in range(len(reversed)):
+                    reversed[ix] = reversed[ix].conj().T
+                final_state = np.linalg.multi_dot(op_list + [self.initial_state] + reversed)
+                if np.abs(np.abs(np.trace(final_state)) - np.abs(np.trace(self.initial_state))) > 1e-12:
+                    print("[Trotter_sim.simulate] Error: significant non-trace preserving operation was done.")
+
+            else:
+                final_state = np.linalg.multi_dot(op_list + [self.initial_state])
+
+            self.final_state = final_state
+            self.gate_count = samples
+            return final_state
 
     def construct_density(self, time, samples):
         if self.use_density_matrices == False:
@@ -399,6 +404,7 @@ class CompositeSim:
                 nb = 1,
                 state_rand = False,
                 use_density_matrices = False,
+                exact_qd = False,
                 verbose = False
                 ):
         self.trotter_operators = []
@@ -417,12 +423,13 @@ class CompositeSim:
 
         self.state_rand = state_rand
 
-        self.qdrift_sim = QDriftSim(use_density_matrices=use_density_matrices)
+        self.qdrift_sim = QDriftSim(use_density_matrices=use_density_matrices, exact_qd=exact_qd)
         self.trotter_sim = TrotterSim(order = inner_order, use_density_matrices=use_density_matrices)
 
         self.nb = nb #number of Qdrift channel samples. Useful to define as an attribute if we are choosing whether or not to optimize over it. Only used in analytic cost optimization
 
         self.gate_count = 0 
+        self.partition_type = None
 
         #Choose to randomize the initial state or just use computational |0>
         #Should probably add functionality to take an initial state as input at some point
@@ -563,7 +570,7 @@ class CompositeSim:
         else:
             return u @ self.initial_state
 
-
+# A Lieb-Robinson local composite simulator
 class LRsim: 
     def __init__(
         self,
@@ -583,11 +590,12 @@ class LRsim:
         self.hilbert_dim = hamiltonian_list[0].shape[0] 
         self.rng_seed = rng_seed
 
-        self.comp_sim_A = CompositeSim(hamiltonian_list = self.local_hamiltonian[0], inner_order=inner_order, outer_order=1, use_density_matrices=True)
-        self.comp_sim_Y = CompositeSim(hamiltonian_list = self.local_hamiltonian[1], inner_order=inner_order, outer_order=1, use_density_matrices=True)
-        self.comp_sim_B = CompositeSim(hamiltonian_list = self.local_hamiltonian[2], inner_order=inner_order, outer_order=1, use_density_matrices=True)
+        self.comp_sim_A = CompositeSim(hamiltonian_list = self.local_hamiltonian[0], inner_order=inner_order, outer_order=1, use_density_matrices=True, exact_qd=True)
+        self.comp_sim_Y = CompositeSim(hamiltonian_list = self.local_hamiltonian[1], inner_order=inner_order, outer_order=1, use_density_matrices=True, exact_qd=True)
+        self.comp_sim_B = CompositeSim(hamiltonian_list = self.local_hamiltonian[2], inner_order=inner_order, outer_order=1, use_density_matrices=True, exact_qd=True)
 
         self.internal_sims = [self.comp_sim_A, self.comp_sim_Y, self.comp_sim_B]
+        self.partition_type = None 
 
         np.random.seed(self.rng_seed)
         #Set the nb for each sim
