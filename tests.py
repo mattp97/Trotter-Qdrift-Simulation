@@ -76,7 +76,7 @@ class Experiment:
             partition_sim(self.sim, partition)
             for t in self.times:
                 if self.verbose:
-                    print("[run_gate_cost] evaluating time:", t)
+                    print("[run_gate_cost] evaluating time:", t, flush=True)
                 out = 0
                 for _ in range(self.num_state_samples):
                     self.sim.randomize_initial_state()
@@ -97,7 +97,7 @@ class Experiment:
             print("[run_infidelity] confirming density_matrices are set? self.sim.use_density_matrices=", self.sim.use_density_matrices)
             for t in self.times:
                 if self.verbose:
-                    print("[run_infidelity] evaluating time:", t)
+                    print("[run_infidelity] evaluating time:", t, flush=True)
                 per_state_out = []
                 for _ in range(self.num_state_samples):
                     if self.verbose:
@@ -124,7 +124,7 @@ class Experiment:
             return
         t1 = self.times[0]
         t2 = self.times[-1]
-        results["crossover"] = find_crossover_time(self.sim, p1, p2, t1, t2, inf_thresh=self.infidelity_threshold, verbose=self.verbose)
+        results["crossover"] = find_crossover_time(self.sim, p1, p2, t1, t2, inf_thresh=self.infidelity_threshold, verbose=self.verbose, mc_samples=self.mc_samples)
         return results
 
     def run_optimal_partition(self):
@@ -145,14 +145,14 @@ class Experiment:
             print("[run_trace_distance] confirming density_matrices are set? self.sim.use_density_matrices=", self.sim.use_density_matrices)
             for t in self.times:
                 if self.verbose:
-                    print("[run_trace_distance] evaluating time:", t)
+                    print("[run_trace_distance] evaluating time:", t, flush=True)
                 per_state_out = []
                 for _ in range(self.num_state_samples):
                     if self.verbose:
                         print("[run_trace_distance] on state sample: ", _)
                     self.sim.randomize_initial_state()
                     exact_final_state = self.sim.simulate_exact_output(t)
-                    mc_dist = multi_trace_distance_sample(self.sim, t, exact_final_state, mc_samples=5000)
+                    mc_dist = multi_trace_distance_sample(self.sim, t, exact_final_state, mc_samples=500)
                     if self.verbose:
                         print("[run_trace_distance] observed monte carlo avg dist: ", np.mean(mc_dist), " +- ", np.std(mc_dist))
                     per_state_out.append(np.mean(mc_dist))
