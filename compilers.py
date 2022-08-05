@@ -40,6 +40,15 @@ def conditional_decorator(dec, condition):
         return dec(func)
     return decorator
 
+#A function to generate a random initial state that is normalized MP-- sampled from gauss to avoid measure concentration
+def initial_state_randomizer(hilbert_dim): #changed to sample each dimension from a gaussain
+     initial_state = []
+     x = np.random.normal(hilbert_dim)
+     y = np.random.normal(hilbert_dim)
+     initial_state = x + (1j * y) 
+     initial_state_norm = initial_state / np.linalg.norm(initial_state)
+     return initial_state_norm
+     
 FLOATING_POINT_PRECISION = 1e-10
 
 
@@ -359,7 +368,7 @@ class QDriftSim:
         if (len(self.hamiltonian_list) == 0): # or (len(self.hamiltonian_list) == 1) caused issues in comp sim
             return np.copy(self.initial_state) #make the choice not to sample a lone qdrift term
         
-        if self.exp_op_cache == {}:
+        if len(self.exp_op_cache) == 0:
             self.exp_op_cache["time"] = time
             self.exp_op_cache["samples"] = samples
             for k in range(len(self.spectral_norms)):
@@ -414,7 +423,6 @@ class CompositeSim:
         else:
             self.hilbert_dim = 0
 
-        #self.hilbert_dim = hamiltonian_list[0].shape[0] #this was commented out before?
         self.rng_seed = rng_seed
         self.outer_order = outer_order 
         self.inner_order = inner_order

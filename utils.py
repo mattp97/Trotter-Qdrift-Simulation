@@ -80,18 +80,6 @@ def graph_hamiltonian(x_dim, y_dim, rng_seed):
                 
     return np.array(hamiltonian_list)
 
-#A function to generate a random initial state that is normalized
-# MH - This is not a good way to sample a uniform random state from high dimensional hilbert spaces, you get
-#    "measure concentration" around specific directions. For small dims should work fine, for large dims tread
-#    cautiously.
-def initial_state_randomizer(hilbert_dim): #changed to sample each dimension from a gaussain
-     initial_state = []
-     x = np.random.normal(hilbert_dim)
-     y = np.random.normal(hilbert_dim)
-     initial_state = x + (1j * y) 
-     initial_state_norm = initial_state / np.linalg.norm(initial_state)
-     return initial_state_norm
-
 #A function to calculate the trace distance between two numpy arrays (density operators)
 def trace_distance(rho, sigma):
     # MATT H: I think the below is probably inefficient, no need to compute entire eigendecomposition when a square root + trace will work.
@@ -582,6 +570,23 @@ def partition_sim_optimal_chop(simulator, time, epsilon):
     print("result.x: ", result.x)
     print("result:", result)
 
+def partition_sim_optimal_chop_nb(simulator, time, epsilon): #gbrt with omptimization of nb and a heuristic
+    dim1 = Real(name='weight', low = 0, high = max(simulator.spectral_norms))
+    dim2 = Integer(name = "nb", low = 1, high = len(simulator.spectral_norms * 2))
+    weight_guess = (statistics.median(simulator.spectral_norms))
+    nb_guess = (int(1/2 * len(simulator.spectral_norms)))
+    dimensions = [dim1, dim2]
+    guess = [weight_guess, nb_guess]
+    @use_named_args(dimensions=dimensions)
+    def obj_fn(weight, nb):
+        simulator.nb = nb
+        partition_sim_chop(simulator, weight)
+        return find_optimal_cost(simulator, time, epsilon)[0] # [0] gets the costs throws away iters
+    result = gbrt_minimize(obj_fn, dimensions=dimensions, n_calls=30, n_initial_points=5, x0= guess, random_state=4, verbose=True, acq_func="LCB")
+    print("result.fun: ", result.fun)
+    print("result.x: ", result.x)
+    print("result:", result)
+
 # Let boosted regression trees try their best to come up with good probabilities
 # Inputs: self-explanatory
 # Returns: (probability list, nb, expected cost at optimal)
@@ -753,6 +758,8 @@ def local_trotter(simulator):
         for j in range(len(simulator.local_hamiltonian[i])):
             a_temp.append(simulator.local_hamiltonian[i][j])
         simulator.internal_sims[i].set_partition(a_temp, b_temp)
+        print("block " + str(i) + " has " + str(len(simulator.internal_sims[i].trotter_norms)) + 
+            " trotter terms and " + str(len(simulator.internal_sims[i].qdrift_norms)) + " qdrift terms")
     return 0
 
 def local_qdrift(simulator):
@@ -763,6 +770,8 @@ def local_qdrift(simulator):
         for j in range(len(simulator.local_hamiltonian[i])):
             b_temp.append(simulator.local_hamiltonian[i][j])
         simulator.internal_sims[i].set_partition(a_temp, b_temp)
+        print("block " + str(i) + " has " + str(len(simulator.internal_sims[i].trotter_norms)) + 
+            " trotter terms and " + str(len(simulator.internal_sims[i].qdrift_norms)) + " qdrift terms")
     return 0
 
 def local_chop(simulator, weights):
@@ -787,9 +796,9 @@ def optimal_local_chop(simulator, time, epsilon): ### needs exact cost function 
     if type(simulator) != LRsim: raise TypeError("only works on LRsims")
     guess_points = []
     dimensions = []
-    nb_a = Integer(name = "nb_a", low=1, high = len(simulator.spectral_norms[0] * 10))
-    nb_y = Integer(name="nb_y", low=1, high = len(simulator.spectral_norms[1] * 10))
-    nb_b = Integer(name="nb_b", low=1, high = len(simulator.spectral_norms[2] * 10))
+    nb_a = Integer(name = "nb_a", low=1, high = len(simulator.spectral_norms[0] * 2))
+    nb_y = Integer(name="nb_y", low=1, high = len(simulator.spectral_norms[1] * 2))
+    nb_b = Integer(name="nb_b", low=1, high = len(simulator.spectral_norms[2] * 2))
     w_a = Real(name = "w_a", low=0, high = max(simulator.spectral_norms[0]))
     w_y = Real(name = "w_y", low=0, high = max(simulator.spectral_norms[1]))
     w_b = Real(name = "w_b", low=0, high = max(simulator.spectral_norms[2]))
@@ -828,9 +837,9 @@ def exact_cost(simulator, time, nb, epsilon): #relies on the use of density matr
         if type(nb) != type([]): raise TypeError("this requires a list of nbs")
         set_local_nb(simulator, nb) #redundancy
         if simulator.partition_type == "qdrift":
-            get_trace_dist = lambda x : sim_trace_distance(simulator=simulator, time=time, iterations=1, nb = x)
+            get_trace_dist = lambda x : sim_trace_distance(simulator=simulator, time=time, iterations=1, nb = [x,x,x]) #only way I can think to do this
         elif simulator.partition_type == 'trotter':
-            get_trace_dist = lambda x : sim_trace_distance(simulator=simulator, time=time, iterations=x, nb = 1)
+            get_trace_dist = lambda x : sim_trace_distance(simulator=simulator, time=time, iterations=x, nb = [1,1,1])
         else: 
             get_trace_dist = lambda x : sim_trace_distance(simulator=simulator, time=time, iterations=x, nb = simulator.nb)
     else: raise TypeError("only works on LR and Composite Sims")
@@ -845,12 +854,13 @@ def exact_cost(simulator, time, nb, epsilon): #relies on the use of density matr
     break_flag = False
     for n in range(27):
         trace_dist = get_trace_dist(upper_bound) 
+        print("current trace distance: " + str(trace_dist))
         if trace_dist < epsilon:
             break_flag = True
             break
         else:
             upper_bound *= 2
-            #print(trace_dist, self.gate_count)
+            print(trace_dist, simulator.gate_count)
     if break_flag == False:
         raise Exception("[sim_channel_performance] maximum number of iterations hit, something is probably off")
     #print("the upper bound is " + str(upper_bound))
@@ -863,7 +873,7 @@ def exact_cost(simulator, time, nb, epsilon): #relies on the use of density matr
         mid = lower_bound + (upper_bound - lower_bound)//2
         if (mid == 2) or (mid ==1): 
             return simulator.gate_count #catching another edge case
-        if (get_trace_dist(mid +1) < epsilon) and (get_trace_dist(mid-1) > epsilon): #Causing Problems
+        if (get_trace_dist(mid +1) < epsilon) and (get_trace_dist(mid-1) > epsilon): 
             break_flag_2 = True
             break #calling the critical point the point where the second point on either side goes from a bad point to a good point (we are in the neighbourhood of the ideal gate count)
         elif get_trace_dist(mid) < epsilon:
@@ -881,13 +891,13 @@ def sim_trace_distance(simulator, time, iterations, nb = None):
     if type(simulator) == CompositeSim:
         if type(nb) == type(None): raise TypeError("required to set an nb")
         simulator.nb = nb
-        return trace_distance(simulator.simulate(time, iterations), exact_time_evolution(simulator.hamiltonian_list, 
+        return trace_distance(simulator.simulate(time, iterations), exact_time_evolution_density(simulator.hamiltonian_list, 
                             time, simulator.initial_state))
 
     elif type(simulator) == LRsim:
         if type(nb) != list: raise TypeError("local sims require an nb value per site")
         set_local_nb(simulator, nb)
-        return trace_distance(simulator.simulate(time, iterations), exact_time_evolution(simulator.hamiltonian_list, 
+        return trace_distance(simulator.simulate(time, iterations), exact_time_evolution_density(simulator.hamiltonian_list, 
                             time, simulator.initial_state))
 
     else: raise Exception("only defined for CompSim and LRsim")
