@@ -12,8 +12,6 @@ from skopt.space import Real, Integer
 from skopt.utils import use_named_args
 import cProfile, pstats, io
 
-#from utils import initial_state_randomizer
-
 
 #A simple profiler. To use this, place @profile above the function of interest
 def profile(fnc):
@@ -50,7 +48,6 @@ def initial_state_randomizer(hilbert_dim): #changed to sample each dimension fro
      return initial_state_norm
      
 FLOATING_POINT_PRECISION = 1e-10
-
 
 # Helper function to compute the timesteps to matrix exponentials in a higher order
 # product formula. This can be done with only the length of an array, the time, and
@@ -95,7 +92,6 @@ def compute_trotter_timesteps(numTerms, simTime, trotterOrder = 1):
 # - iterations: "r" parameter. This object will handle repeating the channel r times and dividing 
 #               overall simulation into t/r chunks.
 # - order: The trotter order, represented as "2k" in literature. 
-
 class TrotterSim:
     def __init__(self, hamiltonian_list = [], order = 1, use_density_matrices = False):
         self.hamiltonian_list = []
@@ -209,8 +205,7 @@ class TrotterSim:
         self.gate_count = len(matrix_mul_list) * iterations
 
         return final_state        
-    
-    
+
 # QDRIFT Simulator
 # Inputs
 # - hamiltonian_list: List of terms that compose your overall hamiltonian. Data type of each entry
@@ -385,8 +380,6 @@ class QDriftSim:
         self.final_state = rho
         self.gate_count = samples
         return np.copy(self.final_state)
-
-    
 
 # Composite Simulator
 # Inputs
@@ -632,7 +625,6 @@ class LRsim:
         self.comp_sim_B.set_initial_state(self.initial_state)
         self.final_state = np.copy(self.initial_state)
 
-
     def simulate(self, time, iterations):
         current_state = np.copy(self.initial_state)
 
@@ -650,5 +642,3 @@ class LRsim:
 
         self.final_state = current_state
         return np.copy(self.final_state)
-        
-    
