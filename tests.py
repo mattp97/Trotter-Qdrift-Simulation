@@ -65,7 +65,6 @@ class Experiment:
             self.base_directory = base_directory + '/'
         self.experiment_label = experiment_label
     
-    
     def run_gate_cost(self):
         results = {}
         for partition in self.partitions:
@@ -103,7 +102,7 @@ class Experiment:
                     if self.verbose:
                         print("[run_infidelity] on state sample: ", _)
                     self.sim.randomize_initial_state()
-                    exact_final_state = self.sim.simulate_exact_output(t)
+                    exact_final_state = self.sim.exact_final_state(t)
                     mc_inf, _ = zip(*multi_infidelity_sample(self.sim, t, exact_final_state, mc_samples=self.mc_samples))
                     per_state_out.append(np.mean(mc_inf))
                 time_inf_tups.append((t, np.mean(per_state_out)))
@@ -151,7 +150,7 @@ class Experiment:
                     if self.verbose:
                         print("[run_trace_distance] on state sample: ", _)
                     self.sim.randomize_initial_state()
-                    exact_final_state = self.sim.simulate_exact_output(t)
+                    exact_final_state = self.sim.exact_final_state(t)
                     mc_dist = multi_trace_distance_sample(self.sim, t, exact_final_state, mc_samples=500)
                     if self.verbose:
                         print("[run_trace_distance] observed monte carlo avg dist: ", np.mean(mc_dist), " +- ", np.std(mc_dist))
