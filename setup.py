@@ -9,25 +9,6 @@ import pickle
 import os
 import shutil
 
-# INFIDELITY_TEST_TYPE = "infidelity"
-# TRACE_DIST_TEST_TYPE = "trace_distance"
-# GATE_COST_TEST_TYPE = "gate_cost"
-# CROSSOVER_TEST_TYPE = "crossover"
-# LAUNCHPAD = "launchpad"
-# MINIMAL_SETTINGS = ["experiment_label",
-                    # "verbose",
-                    # 'use_density_matrices',
-                    # 't_start',
-                    # 't_stop',
-                    # 't_steps',
-                    # 'partitions',
-                    # 'infidelity_threshold',
-                    # 'num_state_samples',
-                    # 'base_directory',
-                    # 'test_type',
-                    # 'mc_samples',
-# ]
-
 def setup_entry_point():
     if len(sys.argv) > 1:
         output_dir = sys.argv[1]
