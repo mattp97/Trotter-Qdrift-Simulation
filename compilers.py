@@ -12,8 +12,6 @@ from skopt.space import Real, Integer
 from skopt.utils import use_named_args
 import cProfile, pstats, io
 
-#from utils import initial_state_randomizer
-
 
 #A simple profiler. To use this, place @profile above the function of interest
 def profile(fnc):
@@ -50,7 +48,6 @@ def initial_state_randomizer(hilbert_dim): #changed to sample each dimension fro
      return initial_state_norm
      
 FLOATING_POINT_PRECISION = 1e-10
-
 
 # Helper function to compute the timesteps to matrix exponentials in a higher order
 # product formula. This can be done with only the length of an array, the time, and
@@ -92,12 +89,9 @@ def compute_trotter_timesteps(numTerms, simTime, trotterOrder = 1):
 #                     in the list is numpy matrix (preferably sparse, no guarantee on data struct
 #                     actually used). Ex: H = A + B + C + D --> hamiltonian_list = [A, B, C, D]
 #                     ASSUME SQUARE MATRIX INPUTS
-# - time: Floating point (no size guarantees) representing time for TOTAL simulation, NOT per
-#         iteration. "t" parameter in the literature.
 # - iterations: "r" parameter. This object will handle repeating the channel r times and dividing 
 #               overall simulation into t/r chunks.
 # - order: The trotter order, represented as "2k" in literature. 
-
 class TrotterSim:
     def __init__(self, hamiltonian_list = [], order = 1, use_density_matrices = False):
         self.hamiltonian_list = []
@@ -211,8 +205,7 @@ class TrotterSim:
         self.gate_count = len(matrix_mul_list) * iterations
 
         return final_state        
-    
-    
+
 # QDRIFT Simulator
 # Inputs
 # - hamiltonian_list: List of terms that compose your overall hamiltonian. Data type of each entry
@@ -388,8 +381,6 @@ class QDriftSim:
         self.gate_count = samples
         return np.copy(self.final_state)
 
-    
-
 # Composite Simulator
 # Inputs
 # - hamiltonian_list: List of terms that compose your overall hamiltonian. Data type of each entry
@@ -465,6 +456,10 @@ class CompositeSim:
         # if nb_optimizer == True:
         #     print("Nb is equal to " + str(self.nb))
 
+    # Returns a dictionary representing the simulator object, designed for multiprocessing.
+    def to_pickle(self):
+        d = {}
+
     def get_hamiltonian_list(self):
         ret = []
         for ix in range(len(self.trotter_norms)):
@@ -488,12 +483,13 @@ class CompositeSim:
         if self.hilbert_dim == 0:
             self.set_initial_state(np.zeros((1,1)))
         elif self.hilbert_dim >= 1:
-            rng_ix = np.random.randint(0, self.hilbert_dim)
-            init = np.zeros((self.hilbert_dim, 1))
-            init[rng_ix] = 1.
-            if self.use_density_matrices == True:
-                init = np.outer(init, init.conj())
-            self.set_initial_state(init)
+            initial_state = []
+            x = np.random.normal(size = (self.hilbert_dim, 1))
+            y = np.random.normal(size = (self.hilbert_dim, 1))
+            initial_state = x + (1j * y) 
+            # np.linalg.norm defaults to frobenius, or L2 norm which is what we want
+            initial_state_normalized = initial_state / np.linalg.norm(initial_state)
+            self.set_initial_state(initial_state_normalized.reshape((self.hilbert_dim, 1)))
     
     def set_trotter_order(self, inner_order, outer_order=1):
         self.inner_order = inner_order
@@ -568,7 +564,7 @@ class CompositeSim:
         return current_state
     
     # Computes time evolution exactly. Returns the final state and makes no internal changes.
-    def simulate_exact_output(self, time):
+    def exact_final_state(self, time):
         h_trott = [self.trotter_norms[ix] * self.trotter_operators[ix] for ix in range(len(self.trotter_norms))]
         h_qd = [self.qdrift_norms[ix] * self.qdrift_operators[ix] for ix in range(len(self.qdrift_norms))]
         h = sum(h_qd + h_trott)
@@ -634,7 +630,6 @@ class LRsim:
         self.comp_sim_B.set_initial_state(self.initial_state)
         self.final_state = np.copy(self.initial_state)
 
-
     def simulate(self, time, iterations):
         current_state = np.copy(self.initial_state)
 
@@ -652,5 +647,3 @@ class LRsim:
 
         self.final_state = current_state
         return np.copy(self.final_state)
-        
-    

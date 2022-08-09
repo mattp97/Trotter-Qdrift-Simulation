@@ -11,24 +11,6 @@ import os
 import shutil
 import matplotlib.pyplot as plt
 
-# INFIDELITY_TEST_TYPE = "infidelity"
-# TRACE_DIST_TEST_TYPE = "trace_distance"
-# GATE_COST_TEST_TYPE = "gate_cost"
-# CROSSOVER_TEST_TYPE = "crossover"
-# LAUNCHPAD = "launchpad"
-# MINIMAL_SETTINGS = ["experiment_label",
-#                     "verbose",
-#                     'use_density_matrices',
-#                     't_start',
-#                     't_stop',
-#                     't_steps',
-#                     'partitions',
-#                     'infidelity_threshold',
-#                     'num_state_samples',
-#                     'output_directory',
-#                     'test_type'
-# ]
-
 def find_launchpad(base_dir):
     launchpad = base_dir + LAUNCHPAD + '/'
     if os.path.exists(launchpad + 'hamiltonian.pickle'):

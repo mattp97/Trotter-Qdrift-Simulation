@@ -65,7 +65,6 @@ class Experiment:
             self.base_directory = base_directory + '/'
         self.experiment_label = experiment_label
     
-    
     def run_gate_cost(self):
         results = {}
         for partition in self.partitions:
@@ -103,7 +102,7 @@ class Experiment:
                     if self.verbose:
                         print("[run_infidelity] on state sample: ", _)
                     self.sim.randomize_initial_state()
-                    exact_final_state = self.sim.simulate_exact_output(t)
+                    exact_final_state = self.sim.exact_final_state(t)
                     mc_inf, _ = zip(*multi_infidelity_sample(self.sim, t, exact_final_state, mc_samples=self.mc_samples))
                     per_state_out.append(np.mean(mc_inf))
                 time_inf_tups.append((t, np.mean(per_state_out)))
@@ -116,12 +115,12 @@ class Experiment:
         results = {}
         if len(self.partitions) < 2:
             print("[run_crossover] Error: trying to compute crossover with less than two partitions. Bail.")
-            return
+            raise Exception("Crossover needs two partitions")
         p1 = self.partitions[0]
         p2 = self.partitions[1]
         if len(self.times) < 2:
             print("[run_crossover] Error: trying to compute crossover without enough endpoints. Bail.")
-            return
+            raise Exception("Crossover needs two time endpoints")
         t1 = self.times[0]
         t2 = self.times[-1]
         results["crossover"] = find_crossover_time(self.sim, p1, p2, t1, t2, inf_thresh=self.infidelity_threshold, verbose=self.verbose, mc_samples=self.mc_samples)
@@ -151,7 +150,7 @@ class Experiment:
                     if self.verbose:
                         print("[run_trace_distance] on state sample: ", _)
                     self.sim.randomize_initial_state()
-                    exact_final_state = self.sim.simulate_exact_output(t)
+                    exact_final_state = self.sim.exact_final_state(t)
                     mc_dist = multi_trace_distance_sample(self.sim, t, exact_final_state, mc_samples=500)
                     if self.verbose:
                         print("[run_trace_distance] observed monte carlo avg dist: ", np.mean(mc_dist), " +- ", np.std(mc_dist))

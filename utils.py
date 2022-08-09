@@ -2,6 +2,7 @@ from ast import And
 from asyncore import loop
 from mimetypes import init
 from operator import matmul
+import pickle
 # from telnetlib import AYT
 import numpy as np
 import matplotlib.pyplot as plt
@@ -14,6 +15,8 @@ from numpy import arange, linspace, outer, random
 import cmath
 import time as time_this
 import scipy
+import json
+import os
 from sympy import S, symbols, printing
 from skopt import gp_minimize
 from skopt import gbrt_minimize
@@ -80,6 +83,14 @@ def graph_hamiltonian(x_dim, y_dim, rng_seed):
                 
     return np.array(hamiltonian_list)
 
+def initial_state_randomizer(hilbert_dim): #changed to sample each dimension from a gaussain
+     initial_state = []
+     x = np.random.normal(size=(hilbert_dim, 1))
+     y = np.random.normal(size=(hilbert_dim, 1))
+     initial_state = x + (1j * y) 
+     initial_state_norm = initial_state / np.linalg.norm(initial_state)
+     return initial_state_norm.reshape((hilbert_dim, 1))
+
 #A function to calculate the trace distance between two numpy arrays (density operators)
 def trace_distance(rho, sigma):
     # MATT H: I think the below is probably inefficient, no need to compute entire eigendecomposition when a square root + trace will work.
@@ -87,9 +98,25 @@ def trace_distance(rho, sigma):
     # w, v = np.linalg.eigh(diff)
     # dist = 1/2 * sum(np.abs(w))
     # return dist
+    if (rho.shape[0] != rho.shape[1]) or (rho.shape != sigma.shape):
+        print("[trace_distance] Improper shapes were given:", rho.shape, sigma.shape)
+        raise Exception("Incompatible shapes for Trace Distance.")
     diff = rho - sigma
     tot = scipy.linalg.sqrtm(diff @ np.copy(diff).conj().T)
     return 0.5 * np.abs(np.trace(tot)) # Note: absolute value after trace is because we have 'complex' variables, so taking the norm should be fine??
+
+def infidelity(rho, sigma):
+    # Density matrices
+    if (rho.shape[0] == rho.shape[1]) and (rho.shape == sigma.shape):
+        exact_sqrt = scipy.linalg.sqrtm(rho)
+        tot_sqrt = scipy.linalg.sqrtm(np.linalg.multi_dot([exact_sqrt, sigma, np.copy(exact_sqrt)]))
+        fidelity = np.abs(np.trace(tot_sqrt))
+        # print("[single_infidelity_sample] fidelity:", fidelity)
+        return 1. - fidelity ** 2
+    elif (rho.shape[1] == 1 or rho.shape[0] == 1) and (rho.shape == sigma.shape):
+        return 1 - (np.abs(np.dot(rho.conj().T, sigma)).flat[0])**2
+    else:
+        print("[infidelity] Could not parse shapes:", rho.shape, sigma.shape)
 
 def exact_time_evolution_density(hamiltonian_list, time, initial_rho):
     if len(hamiltonian_list) == 0:
@@ -98,11 +125,32 @@ def exact_time_evolution_density(hamiltonian_list, time, initial_rho):
     exp_op = linalg.expm(1j * sum(hamiltonian_list) * time)
     return exp_op @ initial_rho @ exp_op.conj().T
 
+# Implementation of the base unit of work needed for a larger experiment. Designed to be run in parallel or as a single monte carlo instance.
+def worker_thread(simulator, time, iterations, seed, base_directory_path, use_trace_distance=True):
+    if base_directory_path[-1] != '/':
+        base_directory_path += '/'
+    if os.path.exists(base_directory_path) == False:
+        print("[worker_thread] No paths?")
+    filename = base_directory_path + "seed_" + str(seed) + ".pickle"
+    simulator.set_seed(seed)
+    out = simulator.simulate(time, iterations)
+    exact = simulator.exact_final_state(time)
+    try:
+        if use_trace_distance:
+            worker_output = trace_distance(out, exact)
+        else:
+            worker_output = infidelity(out, exact)
+        pickle.dump(worker_output, open(filename, 'wb'))
+    except:
+        print("[worker_thread] seed", seed, " could not dump to file:", filename)
+
+# Entry point for a control thread to execute logic based on results from worker threads. 
+def control_thread():
+    pass
 
 # Inputs are self explanatory except simulator which can be any of 
 # TrotterSim, QDriftSim, CompositeSim
 # Outputs: a single shot estimate of the infidelity according to the exact output provided. 
-# @profile
 def single_infidelity_sample(simulator, time, exact_final_state, iterations = 1, nbsamples = 1):
     sim_output = []
     # exact_output = simulator.simulate_exact_output(time)
@@ -134,7 +182,6 @@ def single_infidelity_sample(simulator, time, exact_final_state, iterations = 1,
         infidelity = 1. - (np.abs(np.trace(tot_sqrt)) ** 2)
     return (infidelity, simulator.gate_count)
 
-# @profile
 def multi_infidelity_sample(simulator, time, exact_final_state, iterations=1, nbsamples=1, mc_samples=MC_SAMPLES_DEFAULT):
     ret = []
     # No need to sample TrotterSim, just return single element list
@@ -261,7 +308,7 @@ def find_optimal_cost(simulator, time, infidelity_threshold, heuristic = -1, mc_
         inf_avg_tot, inf_std_tot, cost_tot = 0, 0, 0
         for _ in range(num_state_samples):
             simulator.randomize_initial_state()
-            exact_final_state = simulator.simulate_exact_output(time)
+            exact_final_state = simulator.exact_final_state(time)
             if type(simulator) == QDriftSim:
                 infs, costs = zip(*multi_infidelity_sample(simulator, time, exact_final_state, nbsamples=iterations, mc_samples=mc_samples))
             else:
@@ -351,13 +398,39 @@ def find_crossover_time(simulator, partition1, partition2, time_left, time_right
     t_mid = np.mean([t_lower, t_upper])
     if verbose:
         print("[find_crossover_time] beginning search with:")
-        print("t_lower = ", t_upper)
+        print("t_lower = ", t_lower)
         print("t_upper = ", t_upper)
         print("t_mid = ", t_mid)
         print("start_with_1 = ", start_with_1, flush=True)
+        json_path = os.getenv("SCRATCH")
+        if json_path[-1] != '/':
+            json_path += '/'
+        json_path += "partial_result.json"
+        try:
+            r = {}
+            r["t_lower"] = t_lower
+            r["t_upper"] = t_upper
+            json.dump(r, open(json_path, 'w'))
+        except:
+            print("[find_crossover_time] tried to dump json it didn't work")
+            print("file name was:", json_path)
+
     for _ in range(COST_LOOP_DEPTH):
         if verbose:
             print("[find_crossover_time] evaluating midpoint: ", t_mid, flush=True)
+            try:
+                json_path = os.getenv("SCRATCH")
+                if json_path[-1] != '/':
+                    json_path += '/'
+                json_path += "partial_result.json"
+                r = {}
+                r["midpoint_" + str(_ + 1)] = t_mid
+                curr = json.load(open(json_path, 'r'))
+                r.update(curr)
+                print("json file name was:", json_path)
+                json.dump(r, open(json_path, 'w'))
+            except:
+                print("[find_crossover_time] tried to dump json it didn't work")
         t_mid = np.mean([t_upper, t_lower])
         partition_sim(simulator, partition_type=partition1)
         c1, _ = find_optimal_cost(simulator, t_mid, inf_thresh, verbose=verbose, mc_samples=mc_samples)
@@ -570,23 +643,6 @@ def partition_sim_optimal_chop(simulator, time, epsilon):
     print("result.x: ", result.x)
     print("result:", result)
 
-def partition_sim_optimal_chop_nb(simulator, time, epsilon): #gbrt with omptimization of nb and a heuristic
-    dim1 = Real(name='weight', low = 0, high = max(simulator.spectral_norms))
-    dim2 = Integer(name = "nb", low = 1, high = len(simulator.spectral_norms * 2))
-    weight_guess = (statistics.median(simulator.spectral_norms))
-    nb_guess = (int(1/2 * len(simulator.spectral_norms)))
-    dimensions = [dim1, dim2]
-    guess = [weight_guess, nb_guess]
-    @use_named_args(dimensions=dimensions)
-    def obj_fn(weight, nb):
-        simulator.nb = nb
-        partition_sim_chop(simulator, weight)
-        return find_optimal_cost(simulator, time, epsilon)[0] # [0] gets the costs throws away iters
-    result = gbrt_minimize(obj_fn, dimensions=dimensions, n_calls=30, n_initial_points=5, x0= guess, random_state=4, verbose=True, acq_func="LCB")
-    print("result.fun: ", result.fun)
-    print("result.x: ", result.x)
-    print("result:", result)
-
 # Let boosted regression trees try their best to come up with good probabilities
 # Inputs: self-explanatory
 # Returns: (probability list, nb, expected cost at optimal)
@@ -758,8 +814,6 @@ def local_trotter(simulator):
         for j in range(len(simulator.local_hamiltonian[i])):
             a_temp.append(simulator.local_hamiltonian[i][j])
         simulator.internal_sims[i].set_partition(a_temp, b_temp)
-        print("block " + str(i) + " has " + str(len(simulator.internal_sims[i].trotter_norms)) + 
-            " trotter terms and " + str(len(simulator.internal_sims[i].qdrift_norms)) + " qdrift terms")
     return 0
 
 def local_qdrift(simulator):
@@ -770,8 +824,6 @@ def local_qdrift(simulator):
         for j in range(len(simulator.local_hamiltonian[i])):
             b_temp.append(simulator.local_hamiltonian[i][j])
         simulator.internal_sims[i].set_partition(a_temp, b_temp)
-        print("block " + str(i) + " has " + str(len(simulator.internal_sims[i].trotter_norms)) + 
-            " trotter terms and " + str(len(simulator.internal_sims[i].qdrift_norms)) + " qdrift terms")
     return 0
 
 def local_chop(simulator, weights):
@@ -796,9 +848,9 @@ def optimal_local_chop(simulator, time, epsilon): ### needs exact cost function 
     if type(simulator) != LRsim: raise TypeError("only works on LRsims")
     guess_points = []
     dimensions = []
-    nb_a = Integer(name = "nb_a", low=1, high = len(simulator.spectral_norms[0] * 2))
-    nb_y = Integer(name="nb_y", low=1, high = len(simulator.spectral_norms[1] * 2))
-    nb_b = Integer(name="nb_b", low=1, high = len(simulator.spectral_norms[2] * 2))
+    nb_a = Integer(name = "nb_a", low=1, high = len(simulator.spectral_norms[0] * 10))
+    nb_y = Integer(name="nb_y", low=1, high = len(simulator.spectral_norms[1] * 10))
+    nb_b = Integer(name="nb_b", low=1, high = len(simulator.spectral_norms[2] * 10))
     w_a = Real(name = "w_a", low=0, high = max(simulator.spectral_norms[0]))
     w_y = Real(name = "w_y", low=0, high = max(simulator.spectral_norms[1]))
     w_b = Real(name = "w_b", low=0, high = max(simulator.spectral_norms[2]))
@@ -837,9 +889,9 @@ def exact_cost(simulator, time, nb, epsilon): #relies on the use of density matr
         if type(nb) != type([]): raise TypeError("this requires a list of nbs")
         set_local_nb(simulator, nb) #redundancy
         if simulator.partition_type == "qdrift":
-            get_trace_dist = lambda x : sim_trace_distance(simulator=simulator, time=time, iterations=1, nb = [x,x,x]) #only way I can think to do this
+            get_trace_dist = lambda x : sim_trace_distance(simulator=simulator, time=time, iterations=1, nb = x)
         elif simulator.partition_type == 'trotter':
-            get_trace_dist = lambda x : sim_trace_distance(simulator=simulator, time=time, iterations=x, nb = [1,1,1])
+            get_trace_dist = lambda x : sim_trace_distance(simulator=simulator, time=time, iterations=x, nb = 1)
         else: 
             get_trace_dist = lambda x : sim_trace_distance(simulator=simulator, time=time, iterations=x, nb = simulator.nb)
     else: raise TypeError("only works on LR and Composite Sims")
@@ -854,13 +906,12 @@ def exact_cost(simulator, time, nb, epsilon): #relies on the use of density matr
     break_flag = False
     for n in range(27):
         trace_dist = get_trace_dist(upper_bound) 
-        print("current trace distance: " + str(trace_dist))
         if trace_dist < epsilon:
             break_flag = True
             break
         else:
             upper_bound *= 2
-            print(trace_dist, simulator.gate_count)
+            #print(trace_dist, self.gate_count)
     if break_flag == False:
         raise Exception("[sim_channel_performance] maximum number of iterations hit, something is probably off")
     #print("the upper bound is " + str(upper_bound))
@@ -873,7 +924,7 @@ def exact_cost(simulator, time, nb, epsilon): #relies on the use of density matr
         mid = lower_bound + (upper_bound - lower_bound)//2
         if (mid == 2) or (mid ==1): 
             return simulator.gate_count #catching another edge case
-        if (get_trace_dist(mid +1) < epsilon) and (get_trace_dist(mid-1) > epsilon): 
+        if (get_trace_dist(mid +1) < epsilon) and (get_trace_dist(mid-1) > epsilon): #Causing Problems
             break_flag_2 = True
             break #calling the critical point the point where the second point on either side goes from a bad point to a good point (we are in the neighbourhood of the ideal gate count)
         elif get_trace_dist(mid) < epsilon:
@@ -891,13 +942,13 @@ def sim_trace_distance(simulator, time, iterations, nb = None):
     if type(simulator) == CompositeSim:
         if type(nb) == type(None): raise TypeError("required to set an nb")
         simulator.nb = nb
-        return trace_distance(simulator.simulate(time, iterations), exact_time_evolution_density(simulator.hamiltonian_list, 
+        return trace_distance(simulator.simulate(time, iterations), exact_time_evolution(simulator.hamiltonian_list, 
                             time, simulator.initial_state))
 
     elif type(simulator) == LRsim:
         if type(nb) != list: raise TypeError("local sims require an nb value per site")
         set_local_nb(simulator, nb)
-        return trace_distance(simulator.simulate(time, iterations), exact_time_evolution_density(simulator.hamiltonian_list, 
+        return trace_distance(simulator.simulate(time, iterations), exact_time_evolution(simulator.hamiltonian_list, 
                             time, simulator.initial_state))
 
     else: raise Exception("only defined for CompSim and LRsim")
@@ -912,35 +963,3 @@ def set_local_nb(simulator, nb_list): #is chop using this
 #TODO fix the handeling of nb, check that sim trace distance is using density matrices or apply it. Make sure 
 # we construct the exact denwity matrix when using exact cost.
 
-
-def test():
-    hamiltonian = graph_hamiltonian(2, 1, 1)
-    t = 0.01
-    eps = 0.1
-    compsim = CompositeSim(hamiltonian_list=hamiltonian, inner_order=2)
-    trottsim = TrotterSim(hamiltonian_list=hamiltonian)
-    qsim = QDriftSim(hamiltonian_list=hamiltonian)
-    # partition_sim(compsim, "prob", nb_scaling=.01)
-    # compsim.print_partition()
-    # partition_sim(compsim, "prob", nb_scaling=.05)
-    # compsim.print_partition()
-    # partition_sim(compsim, "prob", nb_scaling=.1)
-    # compsim.print_partition()
-    # partition_sim(compsim, "prob", nb_scaling=.5)
-    # compsim.print_partition()
-    # partition_sim(compsim, "prob", nb_scaling=0.05)
-    # compsim.reset_init_state()
-    # print("Check to see if the hamiltonian has remained the same after many partitionings.")
-    # hamiltonian_copy = compsim.get_hamiltonian_list()
-    # print("Difference norm:", np.linalg.norm(sum(hamiltonian) - sum(hamiltonian_copy)))
-    # compsim.print_partition()
-    # print("testing trotter")
-    # print(find_optimal_cost(trottsim, 1, .1))
-    # print(find_optimal_cost(compsim, 1, .1))
-    # expected_cost(compsim, np.random.random(len(hamiltonian)), 0.01, 0.1, num_samples=100)
-    partition_sim_gbrt_prob(compsim, 1, 0.05)
-    # print("Now testing optimal chop")
-    # partition_sim(compsim, "optimal_chop")
-
-if False:
-    test()
