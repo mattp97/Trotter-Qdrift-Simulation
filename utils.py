@@ -85,11 +85,6 @@ def graph_hamiltonian(x_dim, y_dim, rng_seed):
 
 #A function to calculate the trace distance between two numpy arrays (density operators)
 def trace_distance(rho, sigma):
-    # MATT H: I think the below is probably inefficient, no need to compute entire eigendecomposition when a square root + trace will work.
-    # diff = rho - sigma
-    # w, v = np.linalg.eigh(diff)
-    # dist = 1/2 * sum(np.abs(w))
-    # return dist
     if (rho.shape[0] != rho.shape[1]) or (rho.shape != sigma.shape):
         print("[trace_distance] Improper shapes were given:", rho.shape, sigma.shape)
         raise Exception("Incompatible shapes for Trace Distance.")
@@ -116,29 +111,6 @@ def exact_time_evolution_density(hamiltonian_list, time, initial_rho):
         return 1
     exp_op = linalg.expm(1j * sum(hamiltonian_list) * time)
     return exp_op @ initial_rho @ exp_op.conj().T
-
-# Implementation of the base unit of work needed for a larger experiment. Designed to be run in parallel or as a single monte carlo instance.
-def worker_thread(simulator, time, iterations, seed, base_directory_path, use_trace_distance=True):
-    if base_directory_path[-1] != '/':
-        base_directory_path += '/'
-    if os.path.exists(base_directory_path) == False:
-        print("[worker_thread] No paths?")
-    filename = base_directory_path + "seed_" + str(seed) + ".pickle"
-    simulator.set_seed(seed)
-    out = simulator.simulate(time, iterations)
-    exact = simulator.exact_final_state(time)
-    try:
-        if use_trace_distance:
-            worker_output = trace_distance(out, exact)
-        else:
-            worker_output = infidelity(out, exact)
-        pickle.dump(worker_output, open(filename, 'wb'))
-    except:
-        print("[worker_thread] seed", seed, " could not dump to file:", filename)
-
-# Entry point for a control thread to execute logic based on results from worker threads. 
-def control_thread():
-    pass
 
 # Inputs are self explanatory except simulator which can be any of 
 # TrotterSim, QDriftSim, CompositeSim
