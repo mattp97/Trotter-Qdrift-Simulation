@@ -41,11 +41,11 @@ def conditional_decorator(dec, condition):
 #A function to generate a random initial state that is normalized MP-- sampled from gauss to avoid measure concentration
 def initial_state_randomizer(hilbert_dim): #changed to sample each dimension from a gaussain
      initial_state = []
-     x = np.random.normal(hilbert_dim)
-     y = np.random.normal(hilbert_dim)
+     x = np.random.normal(size=(hilbert_dim, 1))
+     y = np.random.normal(size=(hilbert_dim, 1))
      initial_state = x + (1j * y) 
      initial_state_norm = initial_state / np.linalg.norm(initial_state)
-     return initial_state_norm
+     return initial_state_norm.reshape((hilbert_dim, 1))
      
 FLOATING_POINT_PRECISION = 1e-10
 
@@ -625,6 +625,7 @@ class LRsim:
             self.initial_state[0] = 1.
         
         self.initial_state = np.outer(self.initial_state, self.initial_state.conj())
+
         self.comp_sim_A.set_initial_state(self.initial_state)
         self.comp_sim_Y.set_initial_state(self.initial_state)
         self.comp_sim_B.set_initial_state(self.initial_state)

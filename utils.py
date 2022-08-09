@@ -83,14 +83,6 @@ def graph_hamiltonian(x_dim, y_dim, rng_seed):
                 
     return np.array(hamiltonian_list)
 
-def initial_state_randomizer(hilbert_dim): #changed to sample each dimension from a gaussain
-     initial_state = []
-     x = np.random.normal(size=(hilbert_dim, 1))
-     y = np.random.normal(size=(hilbert_dim, 1))
-     initial_state = x + (1j * y) 
-     initial_state_norm = initial_state / np.linalg.norm(initial_state)
-     return initial_state_norm.reshape((hilbert_dim, 1))
-
 #A function to calculate the trace distance between two numpy arrays (density operators)
 def trace_distance(rho, sigma):
     # MATT H: I think the below is probably inefficient, no need to compute entire eigendecomposition when a square root + trace will work.
@@ -942,13 +934,13 @@ def sim_trace_distance(simulator, time, iterations, nb = None):
     if type(simulator) == CompositeSim:
         if type(nb) == type(None): raise TypeError("required to set an nb")
         simulator.nb = nb
-        return trace_distance(simulator.simulate(time, iterations), exact_time_evolution(simulator.hamiltonian_list, 
+        return trace_distance(simulator.simulate(time, iterations), exact_time_evolution_density(simulator.unparsed_hamiltonian, 
                             time, simulator.initial_state))
 
     elif type(simulator) == LRsim:
         if type(nb) != list: raise TypeError("local sims require an nb value per site")
         set_local_nb(simulator, nb)
-        return trace_distance(simulator.simulate(time, iterations), exact_time_evolution(simulator.hamiltonian_list, 
+        return trace_distance(simulator.simulate(time, iterations), exact_time_evolution_density(simulator.hamiltonian_list, 
                             time, simulator.initial_state))
 
     else: raise Exception("only defined for CompSim and LRsim")
