@@ -76,13 +76,9 @@ class Experiment:
             for t in self.times:
                 if self.verbose:
                     print("[run_gate_cost] evaluating time:", t, flush=True)
-                out = 0
-                for _ in range(self.num_state_samples):
-                    self.sim.randomize_initial_state()
-                    cost, iters = find_optimal_cost(self.sim, t, self.infidelity_threshold, heuristic=heuristic, verbose=self.verbose)
-                    heuristic = iters
-                    out += cost
-                outputs.append((t, out / self.num_state_samples))
+                cost, iters = find_optimal_cost(self.sim, t, self.infidelity_threshold, use_infidelity=False, num_state_samples=self.num_state_samples, mc_samples=self.mc_samples, heuristic=heuristic, verbose=self.verbose)
+                heuristic = iters
+                outputs.append((t, cost))
             results[partition] = outputs
         return results
     
@@ -210,7 +206,7 @@ class Experiment:
         self.infidelity_threshold = settings.get("infidelity_threshold", 0.05)
         self.num_state_samples    = settings.get("num_state_samples", 5)
         self.test_type            = settings.get("test_type", GATE_COST_TEST_TYPE)
-        self.mc_samples           = settings.get("mc_samples", 100)
+        self.mc_samples           = settings.get("mc_samples", MC_SAMPLES_DEFAULT)
 
     # take in a processed hamiltonian list.
     def input_hamiltonian(self, hamiltonian_list):

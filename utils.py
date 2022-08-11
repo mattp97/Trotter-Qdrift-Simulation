@@ -164,25 +164,25 @@ def single_trace_distance_sample(simulator, time, exact_final_state, iterations=
     else:
         sim_output = simulator.simulate(time, iterations)
     if simulator.use_density_matrices == False:
-        return trace_distance(np.outer(sim_output, np.copy(sim_output).conj().T), np.outer(exact_final_state, np.copy(exact_final_state).conj().T))
+        dist = trace_distance(np.outer(sim_output, np.copy(sim_output).conj().T), np.outer(exact_final_state, np.copy(exact_final_state).conj().T))
+        return (dist, simulator.gate_count)
     else:
-        return trace_distance(sim_output, exact_final_state)
+        return (trace_distance(sim_output, exact_final_state), simulator.gate_count)
     
 
 def multi_trace_distance_sample(simulator, time, exact_final_state, iterations=1, nbsamples=1, mc_samples=MC_SAMPLES_DEFAULT):
-    ret = []
     if type(simulator) == TrotterSim or len(simulator.qdrift_norms) == 0:
-        ret.append(single_trace_distance_sample(simulator, time, exact_final_state, iterations=iterations, nbsamples=nbsamples))
-        ret *= mc_samples
+        ret = single_trace_distance_sample(simulator, time, exact_final_state, iterations=iterations, nbsamples=nbsamples)
     else:
         sim_out =  np.zeros(simulator.initial_state.shape, dtype='complex128')
         for _ in range(mc_samples):
             sim_out += simulator.simulate(time, iterations)
         sim_out /= mc_samples
         if simulator.use_density_matrices == False:
-            ret =  trace_distance(np.outer(sim_out, np.copy(sim_out).conj().T), np.outer(exact_final_state, np.copy(exact_final_state).conj().T))
+            dist =  trace_distance(np.outer(sim_out, np.copy(sim_out).conj().T), np.outer(exact_final_state, np.copy(exact_final_state).conj().T))
         else:
-            ret = trace_distance(sim_out, exact_final_state)
+            dist = trace_distance(sim_out, exact_final_state)
+        ret = (dist, simulator.gate_count)
     return ret
 
 def exact_time_evolution(hamiltonian_list, time, initial_state):
@@ -191,15 +191,19 @@ def exact_time_evolution(hamiltonian_list, time, initial_state):
         return 1
     return linalg.expm(1j * sum(hamiltonian_list) * time) @ initial_state
 
-# Performs exponential backoff to find iteration bounds
-# WARNING: With randomized composite channels there is a possibility this does not converge correctly. If you get a "good" sample at
-# a heuristic that should be bad then you will search for a lower bound until you exit.  
-# Inputs
-# - is_iteration_good: a callable that takes in an iteration and returns a boolean if threshold is met
-# - heuristic: the guess as to where a good place to start is
-# Returns:
-# (iter_lower, iter_upper)
+
 def get_iteration_bounds(is_iteration_good, heuristic, verbose=False):
+    """
+    Performs exponential backoff to find iteration bounds for use in gate cost estimators.
+    WARNING: With randomized composite channels there is a possibility this does not converge correctly. If you get a "good" sample at
+    a heuristic that should be bad then you will search for a lower bound until you exit.\n
+    Inputs
+    - is_iteration_good: a callable that takes in an iteration and returns a boolean if threshold is met
+    - heuristic: the guess as to where a good place to start is
+    \n
+    Outputs:\n
+    (iteration lower bound, iteration upper bound)
+    """
     if heuristic < 10:
         if is_iteration_good(10):
             return (0, 10)
@@ -252,39 +256,54 @@ def get_iteration_bounds(is_iteration_good, heuristic, verbose=False):
     raise Exception("get_iteration_bounds")
 
 
-# Varies the number of iterations needed for a simulator to acheive its infidelity threshold. WARNING: will modify the input
-# simulator starting state to a random basis state! Probably need to change this. 
-# Inputs
-# - simulator: Either Trotter, QDrift, or Composite simulator. If a QDrift simulator is used, then the number
-#              of samples is varied. If a Composite simulator is used then iterations is varied while QDrift
-#              samples are held fixed.
-# - mc_samples: Monte Carlo samples for wave function states, shouldn't be necessary with density matrices?
-# Returns (cost, iterations) - a tuple consisting of the gate cost and number of iterations needed to satisfy the infidelity_threshold
-def find_optimal_cost(simulator, time, infidelity_threshold, heuristic = -1, mc_samples=MC_SAMPLES_DEFAULT, num_state_samples=10, verbose=False):
+
+def find_optimal_cost(simulator, time, epsilon, heuristic = -1, use_infidelity = False, mc_samples=MC_SAMPLES_DEFAULT, num_state_samples=10, verbose=False):
+    """
+    Varies the number of iterations needed for a simulator to acheive its infidelity threshold. 
+    # WARNING
+    will modify the input simulator starting state to a random basis state! Probably need to change this. 
+    ## Inputs
+    - simulator: Either Trotter, QDrift, or Composite simulator. If a QDrift simulator is used, then the number
+                 of samples is varied. If a Composite simulator is used then iterations is varied while QDrift
+                 samples are held fixed.
+    - mc_samples: Monte Carlo samples for wave function states, shouldn't be necessary with density matrices?
+    ## Returns
+    - (gate_cost, iterations) a tuple consisting of the gate cost and number of iterations needed to satisfy the epsilon
+    """
     if verbose:
         print("*" * 75)
         print("[find_optimal_cost] computing cost for simulator with partitioning:")
         simulator.print_partition()
-        print("[find_optimal_cost] time = ", time, ", infidelity_threshold =", infidelity_threshold)
+        print("[find_optimal_cost] time = ", time, ", epsilon =", epsilon)
+
+    # Make sure that density matrices are turned on if we use trace distance
+    if use_infidelity == False:
+        simulator.set_density_matrices(True)
 
     # Helper function to average over random initial states and perform monte carlo averaging for infidelity.
-    def get_inf_avg_std_cost(iterations):
+    def get_err_avg_std_cost(iterations):
         inf_avg_tot, inf_std_tot, cost_tot = 0, 0, 0
         for _ in range(num_state_samples):
             simulator.randomize_initial_state()
             exact_final_state = simulator.exact_final_state(time)
-            if type(simulator) == QDriftSim:
-                infs, costs = zip(*multi_infidelity_sample(simulator, time, exact_final_state, nbsamples=iterations, mc_samples=mc_samples))
+            if use_infidelity:
+                if type(simulator) == QDriftSim:
+                    infs, costs = zip(*multi_infidelity_sample(simulator, time, exact_final_state, nbsamples=iterations, mc_samples=mc_samples))
+                else:
+                    infs, costs = zip(*multi_infidelity_sample(simulator, time, exact_final_state, iterations=iterations, mc_samples=mc_samples))
             else:
-                infs, costs = zip(*multi_infidelity_sample(simulator, time, exact_final_state, iterations=iterations, mc_samples=mc_samples))
+                if type(simulator) == QDriftSim:
+                    infs, costs = multi_trace_distance_sample(simulator, time, exact_final_state, nbsamples=iterations, mc_samples=mc_samples)
+                else:
+                    infs, costs = multi_trace_distance_sample(simulator, time, exact_final_state, iterations=iterations, mc_samples=mc_samples)
             inf_avg_tot += np.mean(infs)
             inf_std_tot += np.std(infs)
             cost_tot += np.mean(costs)
         return (inf_avg_tot / num_state_samples, inf_std_tot / num_state_samples, cost_tot / num_state_samples)
             
     def is_iteration_good(iter):
-        avg, std, _ = get_inf_avg_std_cost(iter)
-        return infidelity_threshold > avg + 2 * std
+        avg, std, _ = get_err_avg_std_cost(iter)
+        return epsilon > avg + 2 * std
     
     iter_lower, iter_upper = get_iteration_bounds(is_iteration_good, heuristic, verbose=verbose)
 
@@ -309,7 +328,7 @@ def find_optimal_cost(simulator, time, infidelity_threshold, heuristic = -1, mc_
             iter_lower = iters
     if count == COST_LOOP_DEPTH:
         print("[find_optimal_cost] Reached loop depth, results may be inaccurate")
-    ret = get_inf_avg_std_cost(iter_upper) # a tuple of inf_mean, inf_std, and cost
+    ret = get_err_avg_std_cost(iter_upper) # a tuple of inf_mean, inf_std, and cost
     if verbose:
         print("[find_optimal_cost] converged to iterations = ", iter_upper)
         print("[find_optimal_cost] final infidelity =", ret[0], " +- ", ret[1])
@@ -324,21 +343,24 @@ def crossover_criteria_met(cost1, cost2):
     else:
         return False
 
-# Computes the time where the cost between partitions is less than 1% of their difference.
-# Inputs:
-# simulator - a Composite sim to be partitioned
-# partition1 - first partition to evaluate
-# partition2 - second partition to evaluate
-# time_left - left endpoint for search
-# time_right - right endpoint for search
-# Returns: either computed time or the best guess. Probably should fix this to indicate the cost difference between the partitions
-def find_crossover_time(simulator, partition1, partition2, time_left, time_right, inf_thresh=0.05, verbose=False, mc_samples=100):
+def find_crossover_time(simulator, partition1, partition2, time_left, time_right, epsilon=0.05, use_infidelity=True, verbose=False, mc_samples=MC_SAMPLES_DEFAULT):
+    """
+    ## Computes the time where the cost between partitions is less than 5% of their difference.
+    ### Inputs:
+    - simulator - a Composite sim to be partitioned
+    - partition1 - first partition to evaluate
+    - partition2 - second partition to evaluate
+    - time_left - left endpoint for search
+    - time_right - right endpoint for search
+    ### Returns:
+    - either computed time or the best guess. Probably should fix this to indicate the cost difference between the partitions
+    """
     partition_sim(simulator, partition_type=partition1)
-    cost_left_1, _ = find_optimal_cost(simulator, time_left, inf_thresh, verbose=verbose, mc_samples=mc_samples)
-    cost_right_1, _ = find_optimal_cost(simulator, time_right, inf_thresh, verbose=verbose, mc_samples=mc_samples)
+    cost_left_1, _ = find_optimal_cost(simulator, time_left, epsilon, verbose=verbose, mc_samples=mc_samples)
+    cost_right_1, _ = find_optimal_cost(simulator, time_right, epsilon, verbose=verbose, mc_samples=mc_samples)
     partition_sim(simulator, partition_type=partition2)
-    cost_left_2, _ = find_optimal_cost(simulator, time_left, inf_thresh, verbose=verbose, mc_samples=mc_samples)
-    cost_right_2, _ = find_optimal_cost(simulator, time_right, inf_thresh, verbose=verbose, mc_samples=mc_samples)
+    cost_left_2, _ = find_optimal_cost(simulator, time_left, epsilon, verbose=verbose, mc_samples=mc_samples)
+    cost_right_2, _ = find_optimal_cost(simulator, time_right, epsilon, verbose=verbose, mc_samples=mc_samples)
 
     # Tells us if we start on the lower times with partition1 being cheaper than partition2
     start_with_1 = cost_left_1 < cost_left_2
@@ -397,9 +419,9 @@ def find_crossover_time(simulator, partition1, partition2, time_left, time_right
                 print("[find_crossover_time] tried to dump json it didn't work")
         t_mid = np.mean([t_upper, t_lower])
         partition_sim(simulator, partition_type=partition1)
-        c1, _ = find_optimal_cost(simulator, t_mid, inf_thresh, verbose=verbose, mc_samples=mc_samples)
+        c1, _ = find_optimal_cost(simulator, t_mid, epsilon, verbose=verbose, mc_samples=mc_samples)
         partition_sim(simulator, partition_type=partition2)
-        c2, _ = find_optimal_cost(simulator, t_mid, inf_thresh, verbose=verbose, mc_samples=mc_samples)
+        c2, _ = find_optimal_cost(simulator, t_mid, epsilon, verbose=verbose, mc_samples=mc_samples)
         if crossover_criteria_met(c1, c2):
             return t_mid
         if start_with_1 and (c1 < c2):
@@ -919,6 +941,39 @@ def sim_trace_distance(simulator, time, iterations, nb = None):
     #the nb handeling here is a bit redundant when we look at the fact that it is first handeled in the objective function of
     #local optimal chop
  
+#a function that generates the list of hamiltonian terms for a random NN Heinsenberg model with abritrary b_field strength
+def heisenberg_hamiltonian(length, b_field, rng_seed):
+    y_dim = 1
+    x_dim = length #restrict to 1d spin change so we can get more disjoint regions
+    np.random.seed(rng_seed)
+    hamiltonian_list = []
+    indices = []
+    #graph = initialize_graph(x_dim, y_dim)
+    # operator_set = [X, Y, Z]
+    operator_set = []
+    operator_set.append(np.array([[0., 1.], [1., 0.]]))
+    operator_set.append(np.array([[0., -1.j],[1.j, 0.]]))
+    operator_set.append(np.array([[1., 0.],[0., -1.]]))
+    lat_points = x_dim*y_dim
+    for k in operator_set:
+        for i in range(lat_points):
+            for j in range (lat_points):
+                if (i == j+1):
+                    alpha = np.random.normal()
+                    hamiltonian_list.append(10**alpha * np.matmul(initialize_operator(k, i, lat_points), initialize_operator(k, j, lat_points)))
+                    indices.append([i, j])
+
+                #if ((i==0) and (j==lat_points-1)): #periodic BC (we dont want this as we want to limit connectivity) 
+                    #alpha = np.random.normal()
+                    #hamiltonian_list.append(10**alpha * np.matmul(initialize_operator(k, i, lat_points), initialize_operator(k, j, lat_points)))
+
+            if np.array_equal(operator_set[-1], k) == True:
+                #beta = np.random.normal() if we want to randomize the field strength reponse at each site (might be unphysical)
+                hamiltonian_list.append(b_field * initialize_operator(k, i, lat_points))
+                indices.append([i])
+
+    return (np.array(hamiltonian_list) , indices, length)
+
 def set_local_nb(simulator, nb_list): #is chop using this 
     if type(simulator) != LRsim: raise TypeError("only works on LRsims")
     for i in range(3):
@@ -927,3 +982,16 @@ def set_local_nb(simulator, nb_list): #is chop using this
 #TODO fix the handeling of nb, check that sim trace distance is using density matrices or apply it. Make sure 
 # we construct the exact denwity matrix when using exact cost.
 
+# Debugging purposes
+if __name__ == "__main__":
+    print("[utils.main]")
+    local_nb = [2, 2, 2]
+    heisenberg_hamiltonian_list = heisenberg_hamiltonian(8, 0.5, rng_seed=1)
+    print(heisenberg_hamiltonian_list[0].shape)
+    local_hamiltonian = hamiltonian_localizer_1d(heisenberg_hamiltonian_list, sub_block_size=2)
+    lrsim = LRsim(heisenberg_hamiltonian_list[0], local_hamiltonian, inner_order = 1, nb = local_nb, state_rand = False)
+    local_partition(lrsim, partition = "trotter", time= 0.01, epsilon = 0.01)
+    print("trace distances:")
+    for iter in range(1, 10):
+        print(sim_trace_distance(lrsim, 1e-5, iter, nb=[5, 5, 5]))
+        print('gate count per iter:', lrsim.gate_count / 51)
