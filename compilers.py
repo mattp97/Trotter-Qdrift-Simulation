@@ -632,7 +632,17 @@ class LRsim:
         rng_seed = 1
     ):
         self.gate_count = 0
-        self.hamiltonian_list = hamiltonian_list
+
+        self.hamiltonian_list = []
+        temp_norms = []
+        for k in hamiltonian_list:
+            temp_norms.append(np.linalg.norm(k, ord=2)) 
+        h = max(temp_norms)
+        for l in range(hamiltonian_list.shape[0]):
+            self.hamiltonian_list.append(1/h * hamiltonian_list[l])
+        self.hamiltonian_list = np.array(self.hamiltonian_list)
+
+
         self.local_hamiltonian = local_hamiltonian
         self.inner_order = inner_order
         self.spectral_norms = [] # a list of lists of the spectral norms of each local bracket
@@ -678,6 +688,7 @@ class LRsim:
         self.final_state = np.copy(self.initial_state)
 
     def simulate(self, time, iterations):
+        self.gate_count=0
         current_state = np.copy(self.initial_state)
 
         self.comp_sim_A.set_initial_state(current_state)
@@ -685,7 +696,7 @@ class LRsim:
         self.gate_count += self.comp_sim_A.gate_count
 
         self.comp_sim_Y.set_initial_state(current_state)
-        current_state = self.comp_sim_Y.simulate(time, iterations)
+        current_state = self.comp_sim_Y.simulate(-1*time, iterations)
         self.gate_count += self.comp_sim_Y.gate_count
 
         self.comp_sim_B.set_initial_state(current_state)

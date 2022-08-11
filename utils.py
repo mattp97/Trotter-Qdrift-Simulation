@@ -759,16 +759,16 @@ def hamiltonian_localizer_1d(local_hamiltonian, sub_block_size):
     ix = 0
     while ix < len(terms): 
         if not set(indices[ix]).isdisjoint(arange(start, stop)) == True: #Y region
-            y_terms.append(1/h * terms[ix].conj().T)
-            y_index.append(indices[ix])
+            y_terms.append(1/h * terms[ix])
+            #y_index.append(indices[ix])
 
         if not set(indices[ix]).isdisjoint(arange(start, len(terms))) == True: #B region
             b_terms.append(1/h *terms[ix])
-            b_index.append(indices[ix])
+            #b_index.append(indices[ix])
 
         if not set(indices[ix]).isdisjoint(arange(0, stop)): #A region
             a_terms.append(1/h * terms[ix])
-            a_index.append(indices[ix])
+            #a_index.append(indices[ix])
         ix += 1
     if ((len(a_terms) == 0) or (len(b_terms) == 0) or (len(y_terms) == 0)):
         raise Exception("poor block choice, one of the blocks is empty")
@@ -861,6 +861,7 @@ def optimal_local_chop(simulator, time, epsilon): ### needs exact cost function 
     return 0
 
 def exact_cost(simulator, time, nb, epsilon): #relies on the use of density matrices
+    simulator.gate_count = 0
     if type(simulator.partition_type) == type(None): raise TypeError("call a partition function before calling this function")
     if type(simulator) == (CompositeSim): 
         if type(nb) != int: raise TypeError("this requires a single integer nb")
@@ -875,9 +876,9 @@ def exact_cost(simulator, time, nb, epsilon): #relies on the use of density matr
         if type(nb) != type([]): raise TypeError("this requires a list of nbs")
         set_local_nb(simulator, nb) #redundancy
         if simulator.partition_type == "qdrift":
-            get_trace_dist = lambda x : sim_trace_distance(simulator=simulator, time=time, iterations=1, nb = x)
+            get_trace_dist = lambda x : sim_trace_distance(simulator=simulator, time=time, iterations=1, nb = [x,x,x])
         elif simulator.partition_type == 'trotter':
-            get_trace_dist = lambda x : sim_trace_distance(simulator=simulator, time=time, iterations=x, nb = 1)
+            get_trace_dist = lambda x : sim_trace_distance(simulator=simulator, time=time, iterations=x, nb = [1,1,1])
         else: 
             get_trace_dist = lambda x : sim_trace_distance(simulator=simulator, time=time, iterations=x, nb = simulator.nb)
     else: raise TypeError("only works on LR and Composite Sims")
