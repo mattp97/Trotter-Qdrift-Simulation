@@ -13,6 +13,8 @@ from skopt.space import Real, Integer
 from skopt.utils import use_named_args
 import cProfile, pstats, io
 
+from .utils import MC_SAMPLES_DEFAULT
+
 
 #A simple profiler. To use this, place @profile above the function of interest
 def profile(fnc):
@@ -586,10 +588,16 @@ class CompositeSim:
         return 0
 
     def print_partition(self):
+        """
+        prints out the partitioning.
+        """
         print("[CompositeSim] # of Trotter terms:", len(self.trotter_norms), ", # of Qdrift terms: ", len(self.qdrift_norms), ", and Nb = ", self.nb)
 
-    # Simulate time evolution approximately. returns the final state and stores the number of gates executed as self.gate_count
-    def simulate(self, time, iterations): 
+    def simulate(self, time, iterations):
+        """
+        Implements a single instance of the composite channel for the specified input time and interations. Specifically, the QDrift channel
+        represents a single sampled value. 
+        """
         self.gate_count = 0
         outer_loop_timesteps = compute_trotter_timesteps(2, time / (1. * iterations), self.outer_order)
 
@@ -608,6 +616,40 @@ class CompositeSim:
         self.trotter_sim.set_initial_state(self.initial_state)
         self.qdrift_sim.set_initial_state(self.initial_state)
         return current_state
+
+    def simulate_mc(self, time, iterations, mc_samples=MC_SAMPLES_DEFAULT):
+        """
+        Represents a monte-carlo'd implementation of the QDrift channel to simulate the overall composite channel. This is specifically implemented as a 
+        starting point for allowing multiprocessing.
+        """
+        self.gate_count = 0
+        outer_loop_timesteps = compute_trotter_timesteps(2, time / (1. * iterations), self.outer_order)
+
+        current_state = np.copy(self.initial_state)
+        trotter_ham = self.trotter_sim.get_hamiltonian_list()
+        qdrift_ham = self.qdrift_sim.get_hamiltonian_list()
+        processed_trotter_ham = [mat.tolist() for mat in trotter_ham]
+        processed_trotter_ham.append(trotter_ham[0].shape)
+        processed_qdrift_ham = [mat.tolist() for mat in qdrift_ham]
+        processed_qdrift_ham.append(qdrift_ham[0].shape)
+
+
+        # now we need a simple pickle-able function to return an ndarray representing the simulated output for time and iterations.
+        # what do we provide as input?
+        d = {}
+        d["initial_state"] = current_state.tolist()
+        d["trotter_hamiltonian"] = processed_trotter_ham
+        d["qdrift_hamiltonian"] = processed_qdrift_ham
+        d["inner_order"] = self.inner_order
+        d["outer_order"] = self.outer_order
+        d["nb"] = self.nb
+        d["time"] = time
+        d["iterations"] = iterations
+        d["use_density_matrices"] = self.use_density_matrices
+        d["rng_seed"] = self.rng_seed
+
+        workers = Pool
+
     
     # Computes time evolution exactly. Returns the final state and makes no internal changes.
     def exact_final_state(self, time):
