@@ -76,13 +76,9 @@ class Experiment:
             for t in self.times:
                 if self.verbose:
                     print("[run_gate_cost] evaluating time:", t, flush=True)
-                out = 0
-                for _ in range(self.num_state_samples):
-                    self.sim.randomize_initial_state()
-                    cost, iters = find_optimal_cost(self.sim, t, self.infidelity_threshold, heuristic=heuristic, verbose=self.verbose)
-                    heuristic = iters
-                    out += cost
-                outputs.append((t, out / self.num_state_samples))
+                cost, iters = find_optimal_cost(self.sim, t, self.infidelity_threshold, use_infidelity=False, num_state_samples=self.num_state_samples, mc_samples=self.mc_samples, heuristic=heuristic, verbose=self.verbose)
+                heuristic = iters
+                outputs.append((t, cost))
             results[partition] = outputs
         return results
     
@@ -123,7 +119,7 @@ class Experiment:
             raise Exception("Crossover needs two time endpoints")
         t1 = self.times[0]
         t2 = self.times[-1]
-        results["crossover"] = find_crossover_time(self.sim, p1, p2, t1, t2, inf_thresh=self.infidelity_threshold, verbose=self.verbose, mc_samples=self.mc_samples)
+        results["crossover"] = find_crossover_time(self.sim, p1, p2, t1, t2, epsilon=self.infidelity_threshold, verbose=self.verbose, mc_samples=self.mc_samples)
         return results
 
     def run_optimal_partition(self):
@@ -147,16 +143,16 @@ class Experiment:
                     print("[run_trace_distance] evaluating time:", t, flush=True)
                 per_state_out = []
                 for _ in range(self.num_state_samples):
-                    if self.verbose:
-                        print("[run_trace_distance] on state sample: ", _)
+                    # if self.verbose:
+                        # print("[run_trace_distance] on state sample: ", _)
                     self.sim.randomize_initial_state()
                     exact_final_state = self.sim.exact_final_state(t)
-                    mc_dist = multi_trace_distance_sample(self.sim, t, exact_final_state, mc_samples=500)
-                    if self.verbose:
-                        print("[run_trace_distance] observed monte carlo avg dist: ", np.mean(mc_dist), " +- ", np.std(mc_dist))
-                    per_state_out.append(np.mean(mc_dist))
+                    dist, cost = multi_trace_distance_sample(self.sim, t, exact_final_state, mc_samples=500)
+                    # if self.verbose:
+                        # print("[run_trace_distance] observed monte carlo avg dist: ", dist, "with cost ", cost)
+                    per_state_out.append(dist)
                 time_dist_tups.append((t, np.mean(per_state_out)))
-                print("[run_trace_distance] average dist: ", np.mean(per_state_out))
+                print("[run_trace_distance] average (over initial states) trace distance: ", np.mean(per_state_out))
             results[partition] = time_dist_tups
         return results
 
@@ -210,7 +206,7 @@ class Experiment:
         self.infidelity_threshold = settings.get("infidelity_threshold", 0.05)
         self.num_state_samples    = settings.get("num_state_samples", 5)
         self.test_type            = settings.get("test_type", GATE_COST_TEST_TYPE)
-        self.mc_samples           = settings.get("mc_samples", 100)
+        self.mc_samples           = settings.get("mc_samples", MC_SAMPLES_DEFAULT)
 
     # take in a processed hamiltonian list.
     def input_hamiltonian(self, hamiltonian_list):

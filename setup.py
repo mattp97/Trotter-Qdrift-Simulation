@@ -35,6 +35,7 @@ def setup_manage_hamiltonians(base_dir):
         print("[setup] created hamiltonian directory at: ", base_dir + "hamiltonians")
     hamiltonian_base = base_dir + "hamiltonians/"
     hamiltonians = [f for f in os.listdir(hamiltonian_base) if os.path.isfile(hamiltonian_base + f)]
+    hamiltonians.sort()
     print("[setup] found the following hamiltonian files")
     for i in range(len(hamiltonians)):
         print("(" + str(i + 1) +") ", hamiltonians[i])
@@ -107,6 +108,7 @@ def setup_manage_settings(base_dir):
         print("[setup] created settings directory at: ", base_dir + "settings")
     settings_base = base_dir + "settings/"
     settings_files = [f for f in os.listdir(settings_base) if os.path.isfile(settings_base + f)]
+    settings_files.sort()
     print("[setup] found the following settings files")
     for ix in range(len(settings_files)):
         print("(" + str(ix + 1) + ")", settings_files[ix])

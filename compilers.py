@@ -1,17 +1,13 @@
 import numpy as np
-import statistics
 from scipy import linalg
-from scipy import optimize
-from scipy import interpolate
-from numpy import inner, mat, random
+import multiprocessing as mp
 # import time as time_this
-from sympy import S, symbols, printing
-from skopt import gp_minimize
-from skopt import gbrt_minimize
-from skopt.space import Real, Integer
-from skopt.utils import use_named_args
 import cProfile, pstats, io
+from itertools import repeat
+from copy import deepcopy
 
+# from .utils import MC_SAMPLES_DEFAULT, graph_hamiltonian
+# import utils
 
 #A simple profiler. To use this, place @profile above the function of interest
 def profile(fnc):
@@ -154,7 +150,18 @@ class TrotterSim:
     # quantum state.
     # TODO: Check that the input matches shape? aka density matrix vs statevector
     def set_initial_state(self, psi_init):
-        self.initial_state = psi_init
+        if len(self.hamiltonian_list) == 0:
+            return
+        hilbert_dim = self.hamiltonian_list[0].shape[0]
+        is_input_density_matrix = (psi_init.shape[0] == hilbert_dim) and (psi_init.shape[1] == hilbert_dim)
+        if self.use_density_matrices and is_input_density_matrix:
+            self.initial_state = psi_init
+        elif self.use_density_matrices and (is_input_density_matrix == False):
+            self.initial_state = np.outer(psi_init, np.copy(psi_init).conj().T)
+        elif (self.use_density_matrices == False) and (is_input_density_matrix == False):
+            self.initial_state = psi_init
+        else:
+            print("[TrotterSim.set_initial_state] Tried to set a density matrix to initial state for non-density matrix sim. Doing nothing.")
 
     def reset_init_state(self):
         if len(self.hamiltonian_list) > 0:
@@ -265,7 +272,18 @@ class QDriftSim:
     # quantum state.
     # TODO: check inputs match? aka density matrix vs not
     def set_initial_state(self, psi_init):
-        self.initial_state = psi_init
+        if len(self.hamiltonian_list) == 0:
+            return 
+        hilbert_dim = self.hamiltonian_list[0].shape[0]
+        is_input_density_matrix = (psi_init.shape[0] == hilbert_dim) and (psi_init.shape[1] == hilbert_dim)
+        if self.use_density_matrices and is_input_density_matrix:
+            self.initial_state = psi_init
+        elif self.use_density_matrices and (is_input_density_matrix == False):
+            self.initial_state = np.outer(psi_init, np.copy(psi_init).conj().T)
+        elif (self.use_density_matrices == False) and (is_input_density_matrix == False):
+            self.initial_state = psi_init
+        else:
+            print("[QDriftSim.set_initial_state] Tried to set a density matrix to initial state for non-density matrix sim. Doing nothing.")
 
     def reset_init_state(self):
         if len(self.hamiltonian_list) > 0:
@@ -381,20 +399,24 @@ class QDriftSim:
         self.gate_count = samples
         return np.copy(self.final_state)
 
-# Composite Simulator
-# Inputs
-# - hamiltonian_list: List of terms that compose your overall hamiltonian. Data type of each entry
-#                     in the list is numpy matrix (preferably sparse, no guarantee on data struct
-#                     actually used). Ex: H = A + B + C + D --> hamiltonian_list = [A, B, C, D]
-#                     ASSUME SQUARE MATRIX INPUTS
-# - rng_seed: Seed for the random number generator so results are reproducible.
-# - inner_order: The Trotter-Suzuki product formula order for the Trotter channel
-# - outter_order: The decomposition order / "outer-loop" order. Dictates which channels to simulate for how long
-# - nb: number of samples to use in the QDrift channel.
-# - state_rand: use random initial states if true, use computational |0> if false. 
+
 
 ###############################################################################################################################################################
 class CompositeSim:
+    """
+    # Composite Simulator
+    A simulator whose sole purpose is to store hamiltonians, a cache of operator exponentials, an initial state, and then simulate it's time dynamics.
+    ## Inputs
+    - hamiltonian_list: List of terms that compose your overall hamiltonian. Data type of each entry
+                        in the list is numpy matrix (preferably sparse, no guarantee on data struct
+                        actually used). Ex: H = A + B + C + D --> hamiltonian_list = [A, B, C, D]
+                        ASSUME SQUARE MATRIX INPUTS
+    - rng_seed: Seed for the random number generator so results are reproducible.
+    - inner_order: The Trotter-Suzuki product formula order for the Trotter channel
+    - outter_order: The decomposition order / "outer-loop" order. Dictates which channels to simulate for how long
+    - nb: number of samples to use in the QDrift channel.
+    - state_rand: use random initial states if true, use computational |0> if false. 
+    """
     def __init__(
                 self,
                 hamiltonian_list = [],
@@ -490,16 +512,35 @@ class CompositeSim:
             # np.linalg.norm defaults to frobenius, or L2 norm which is what we want
             initial_state_normalized = initial_state / np.linalg.norm(initial_state)
             self.set_initial_state(initial_state_normalized.reshape((self.hilbert_dim, 1)))
-    
+
+    def set_density_matrices(self, use_density_matrices):
+        self.use_density_matrices = use_density_matrices
+        self.trotter_sim.use_density_matrices = use_density_matrices
+        self.qdrift_sim.use_density_matrices = use_density_matrices
+        self.reset_initial_state()
+
     def set_trotter_order(self, inner_order, outer_order=1):
         self.inner_order = inner_order
         self.trotter_sim.set_trotter_order(inner_order)
         self.outer_order = outer_order
 
     def set_initial_state(self, state):
-        self.initial_state = state
-        self.trotter_sim.set_initial_state(state)
-        self.qdrift_sim.set_initial_state(state)
+        is_input_density_matrix = (state.shape[0] == self.hilbert_dim) and (state.shape[1] == self.hilbert_dim)
+        if self.use_density_matrices and (is_input_density_matrix == False):
+            density_matrix = np.outer(state, np.copy(state).conj().T)
+            self.initial_state = density_matrix
+            self.trotter_sim.set_initial_state(density_matrix)
+            self.qdrift_sim.set_initial_state(density_matrix)
+        elif self.use_density_matrices and (is_input_density_matrix == True):
+            self.initial_state = np.copy(state)
+            self.trotter_sim.set_initial_state(state)
+            self.qdrift_sim.set_initial_state(state)
+        elif (self.use_density_matrices == False) and (is_input_density_matrix == False):
+            self.initial_state = state
+            self.trotter_sim.set_initial_state(state)
+            self.qdrift_sim.set_initial_state(state)
+        else:
+            print("[CompositeSim.set_initial_state] trying to set density matrix input to non-density matrix simulator.")
 
     def set_hamiltonian(self, hamiltonian_list):
         self.hilbert_dim = hamiltonian_list[0].shape[0]
@@ -540,21 +581,27 @@ class CompositeSim:
         return 0
 
     def print_partition(self):
+        """
+        prints out the partitioning.
+        """
         print("[CompositeSim] # of Trotter terms:", len(self.trotter_norms), ", # of Qdrift terms: ", len(self.qdrift_norms), ", and Nb = ", self.nb)
 
-    # Simulate time evolution approximately. returns the final state and stores the number of gates executed as self.gate_count
-    def simulate(self, time, iterations): 
+    def simulate(self, time, iterations):
+        """
+        Implements a single instance of the composite channel for the specified input time and interations. Specifically, the QDrift channel
+        represents a single sampled value. 
+        """
         self.gate_count = 0
         outer_loop_timesteps = compute_trotter_timesteps(2, time / (1. * iterations), self.outer_order)
 
         current_state = np.copy(self.initial_state)
         for i in range(iterations):
             for (ix, sim_time) in outer_loop_timesteps:
-                if ix == 0:
+                if ix == 0 and len(self.trotter_norms) > 0:
                     self.trotter_sim.set_initial_state(current_state)
                     current_state = self.trotter_sim.simulate(sim_time, 1)
                     self.gate_count += self.trotter_sim.gate_count
-                if ix == 1:
+                if ix == 1 and len(self.qdrift_norms) > 0:
                     self.qdrift_sim.set_initial_state(current_state)
                     current_state = self.qdrift_sim.simulate(sim_time, self.nb)
                     self.gate_count += self.qdrift_sim.gate_count
@@ -562,7 +609,57 @@ class CompositeSim:
         self.trotter_sim.set_initial_state(self.initial_state)
         self.qdrift_sim.set_initial_state(self.initial_state)
         return current_state
-    
+
+    def to_multiprocessing_dictionary(self, time, iterations):
+        # now we need a simple pickle-able function to return an ndarray representing the simulated output for time and iterations.
+        # what do we provide as input?
+        trotter_ham = self.trotter_sim.get_hamiltonian_list()
+        qdrift_ham = self.qdrift_sim.get_hamiltonian_list()
+        if len(trotter_ham) > 0:
+            processed_trotter_ham = [mat.tolist() for mat in trotter_ham]
+            processed_trotter_ham.append(trotter_ham[0].shape)
+        else:
+            processed_trotter_ham = []
+        if len(qdrift_ham) > 0:
+            processed_qdrift_ham = [mat.tolist() for mat in qdrift_ham]
+            processed_qdrift_ham.append(qdrift_ham[0].shape)
+        else:
+            processed_qdrift_ham = []
+        d = {}
+        state = np.copy(self.initial_state).tolist()
+        state.append(self.initial_state.shape)
+        d["initial_state"] = state
+        d["trotter_hamiltonian"] = processed_trotter_ham
+        d["qdrift_hamiltonian"] = processed_qdrift_ham
+        d["inner_order"] = self.inner_order
+        d["outer_order"] = self.outer_order
+        d["nb"] = self.nb
+        d["time"] = time
+        d["iterations"] = iterations
+        d["use_density_matrices"] = self.use_density_matrices
+        d["rng_seed"] = self.rng_seed
+        return d
+
+    def simulate_mc(self, time, iterations, mc_samples=100):
+        """
+        Represents a monte-carlo'd implementation of the QDrift channel to simulate the overall composite channel. This is specifically implemented as a 
+        starting point for allowing multiprocessing.
+        """
+        self.gate_count = 0
+
+        final_state = np.zeros(self.initial_state.shape, dtype=self.initial_state.dtype)
+        dict_state = self.to_multiprocessing_dictionary(time, iterations)
+        argument_iterator = []
+        for _ in range(mc_samples):
+            argument_iterator.append((deepcopy(dict_state), np.random.randint(1)))
+        with mp.Pool() as pool:
+            states, shapes, gate_counts = zip(*pool.starmap(simulate_worker_thread, iter(argument_iterator)))
+            for ix in range(len(states)):
+                final_state += np.array(states[ix], dtype=final_state.dtype).reshape(shapes[ix])
+            final_state /= len(states)
+        self.gate_count = np.mean(gate_counts)
+        return final_state
+
     # Computes time evolution exactly. Returns the final state and makes no internal changes.
     def exact_final_state(self, time):
         h_trott = [self.trotter_norms[ix] * self.trotter_operators[ix] for ix in range(len(self.trotter_norms))]
@@ -573,6 +670,34 @@ class CompositeSim:
             return u @ self.initial_state @ u.conj().T
         else:
             return u @ self.initial_state
+
+def composite_sim_from_dictionary(d):
+    processed_trotter = d.get("trotter_hamiltonian", [])
+    processed_qdrift = d.get("qdrift_hamiltonian", [])
+    if len(processed_trotter) > 0:
+        shape = processed_trotter.pop(-1)
+        final_trotter = [np.array(mat).reshape(shape) for mat in processed_trotter]
+    else:
+        final_trotter = []
+    if len(processed_qdrift) > 0:
+        shape = processed_qdrift.pop(-1)
+        final_qdrift = [np.array(mat).reshape(shape) for mat in processed_qdrift]
+    else:
+        final_qdrift = []
+    ham_list = final_qdrift + final_trotter
+    sim = CompositeSim(hamiltonian_list=ham_list, inner_order=d.get("inner_order", 1), outer_order=d.get("outer_order", 1), verbose=True, nb=d.get("nb", 1), use_density_matrices=d.get("use_density_matrices", True), rng_seed=d.get("rng_seed", 1))
+    sim.set_partition(final_trotter, final_qdrift)
+    state = d.get("initial_state")
+    shape = state.pop(-1)
+    sim.set_initial_state(np.array(state).reshape(shape))
+    return sim
+
+def simulate_worker_thread(dict_state, rng_seed):
+    dict_state["rng_seed"] = rng_seed
+    simulator = composite_sim_from_dictionary(dict_state)
+    final_state = simulator.simulate(dict_state.get("time", 1e-3), iterations=dict_state.get("iterations", 1))
+    shape = final_state.shape
+    return (final_state.tolist(), shape, simulator.gate_count)
 
 # A Lieb-Robinson local composite simulator
 class LRsim: 
@@ -660,3 +785,10 @@ class LRsim:
 
         self.final_state = current_state
         return np.copy(self.final_state)
+
+if __name__ == "__main__":
+    from utils import graph_hamiltonian
+    ham = graph_hamiltonian(7,1,1)
+    sim = CompositeSim(hamiltonian_list=ham, use_density_matrices=True, verbose=True)
+    sim.randomize_initial_state()
+    sim.simulate_mc(1e-3, 2, mc_samples=8)
