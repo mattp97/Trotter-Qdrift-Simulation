@@ -144,7 +144,6 @@ def multi_infidelity_sample(simulator, time, exact_final_state, iterations=1, nb
     else:
         for samp in range(mc_samples):
             ret.append(single_infidelity_sample(simulator, time, exact_final_state, iterations=iterations, nbsamples=nbsamples))
-
     return ret
 
 def single_trace_distance_sample(simulator, time, exact_final_state, iterations=1, nbsamples=1):
