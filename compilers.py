@@ -191,15 +191,15 @@ class TrotterSim:
         # or matrix-vec multiplications. ALSO ITERATIONS IS HANDLED HERE in a really slick/sneaky way.
         final_state = np.copy(self.initial_state)
         if self.use_density_matrices:
-            reversed = matrix_mul_list.copy()
-            reversed.reverse()
-            for ix in range(len(reversed)):
-                reversed[ix] = reversed[ix].conj().T
-            final_state = np.linalg.multi_dot(matrix_mul_list * iterations + [self.initial_state] + reversed * iterations)
+
+            scrunch_op = [np.linalg.multi_dot(matrix_mul_list)]
+            scrunch_op_dagger = [np.copy(scrunch_op[0]).conj().T]
+            final_state = np.linalg.multi_dot(scrunch_op * iterations + [self.initial_state] + scrunch_op_dagger * iterations)
             if np.abs(np.abs(np.trace(final_state)) - np.abs(np.trace(self.initial_state))) > 1e-12:
                 print("[Trotter_sim.simulate] Error: significant non-trace preserving operation was done.")
         else:
-            final_state = np.linalg.multi_dot(matrix_mul_list * iterations + [self.initial_state])
+            scrunch_op = [np.linalg.multi_dot(matrix_mul_list)]
+            final_state = np.linalg.multi_dot(scrunch_op * iterations + [self.initial_state])
         
         # TODO: This only uses the gates used for one side if we use density matrix, is this reasonable?
         self.gate_count = len(matrix_mul_list) * iterations
@@ -588,14 +588,15 @@ class LRsim:
         self.gate_count = 0
 
         self.hamiltonian_list = []
+
+        #normalize the incoming hamiltonian
         temp_norms = []
         for k in hamiltonian_list:
             temp_norms.append(np.linalg.norm(k, ord=2)) 
         h = max(temp_norms)
-        for l in range(hamiltonian_list.shape[0]):
-            self.hamiltonian_list.append(1/h * hamiltonian_list[l])
+        for xi in range(hamiltonian_list.shape[0]):
+            self.hamiltonian_list.append(1/h * hamiltonian_list[xi])
         self.hamiltonian_list = np.array(self.hamiltonian_list)
-
 
         self.local_hamiltonian = local_hamiltonian
         self.inner_order = inner_order
@@ -603,13 +604,13 @@ class LRsim:
         self.state_rand = state_rand
         self.hilbert_dim = hamiltonian_list[0].shape[0] 
         self.rng_seed = rng_seed
+        self.partition_type = None
 
         self.comp_sim_A = CompositeSim(hamiltonian_list = self.local_hamiltonian[0], inner_order=inner_order, outer_order=1, use_density_matrices=True, exact_qd=True)
         self.comp_sim_Y = CompositeSim(hamiltonian_list = self.local_hamiltonian[1], inner_order=inner_order, outer_order=1, use_density_matrices=True, exact_qd=True)
         self.comp_sim_B = CompositeSim(hamiltonian_list = self.local_hamiltonian[2], inner_order=inner_order, outer_order=1, use_density_matrices=True, exact_qd=True)
 
         self.internal_sims = [self.comp_sim_A, self.comp_sim_Y, self.comp_sim_B]
-        self.partition_type = None 
 
         np.random.seed(self.rng_seed)
         #Set the nb for each sim
