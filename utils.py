@@ -115,6 +115,7 @@ def single_infidelity_sample(simulator, time, exact_final_state, iterations = 1,
         sim_output = simulator.simulate(time, iterations)
     
     if type(simulator) == CompositeSim:
+        simulator.nb = nbsamples #Fixed
         sim_output = simulator.simulate(time, iterations)
 
     if type(simulator) == LRsim:
@@ -544,7 +545,7 @@ def partition_sim_prob(simulator, time, epsilon, nb_scaling, optimize):
     # TODO: how to optimize this quantity? not sure what optimal is without computing gate counts?
     # MATT.H - Not really sure if this is optimizing nb or how it's going about it. Need to fix.
     if optimize and False:
-        optimal_nb = optimize.minimize(self.prob_nb_optima, self.nb, method='Nelder-Mead', bounds = optimize.Bounds([0], [np.inf], keep_feasible = False)) #Nb attribute serves as an inital geuss in this partition
+        optimal_nb = optimize.minimize(prob_nb_optima, nb, method='Nelder-Mead', bounds = optimize.Bounds([0], [np.inf], keep_feasible = False)) #Nb attribute serves as an inital geuss in this partition
         nb_high = int(optimal_nb.x +1)
         nb_low = int(optimal_nb.x)
         prob_high = self.prob_nb_optima(nb_high) #check higher, (nb must be int)
@@ -823,19 +824,19 @@ def optimal_local_chop(simulator, time, epsilon): ### needs exact cost function 
     if type(simulator) != LRsim: raise TypeError("only works on LRsims")
     guess_points = []
     dimensions = []
-    nb_a = Integer(name = "nb_a", low=1, high = len(simulator.spectral_norms[0] * 10))
-    nb_y = Integer(name="nb_y", low=1, high = len(simulator.spectral_norms[1] * 10))
-    nb_b = Integer(name="nb_b", low=1, high = len(simulator.spectral_norms[2] * 10))
-    w_a = Real(name = "w_a", low=0, high = max(simulator.spectral_norms[0]))
-    w_y = Real(name = "w_y", low=0, high = max(simulator.spectral_norms[1]))
-    w_b = Real(name = "w_b", low=0, high = max(simulator.spectral_norms[2]))
+    dim1 = Integer(name = "nb_a", low=1, high = len(simulator.spectral_norms[0]))
+    dim2 = Integer(name="nb_y", low=1, high = len(simulator.spectral_norms[1]))
+    dim3 = Integer(name="nb_b", low=1, high = len(simulator.spectral_norms[2]))
+    dim4 = Real(name = "w_a", low=0, high = max(simulator.spectral_norms[0]))
+    dim5 = Real(name = "w_y", low=0, high = max(simulator.spectral_norms[1]))
+    dim6 = Real(name = "w_b", low=0, high = max(simulator.spectral_norms[2]))
 
+    for j in range(3):
+        guess_points.append(int((1/2)*len(simulator.spectral_norms[j])))
     for i in range(3):
         guess_points.append(statistics.median(simulator.spectral_norms[i]))
-    for j in range(3):
-        guess_points.append(int(len(simulator.spectral_norms[j])))
 
-    dimensions = [nb_a, nb_y, nb_b, w_a, w_y, w_b]
+    dimensions = [dim1, dim2, dim3, dim4, dim5, dim6]
 
     @use_named_args(dimensions=dimensions)
     def obj_func(nb_a, nb_y, nb_b, w_a, w_y, w_b):
@@ -845,8 +846,10 @@ def optimal_local_chop(simulator, time, epsilon): ### needs exact cost function 
         local_partition(simulator, partition = "chop", weights=weights, time=time, epsilon=epsilon)
         return exact_cost(simulator, time, nb_list, epsilon)
     
-    gbrt_minimize(func=obj_func,dimensions=dimensions, n_calls=20, n_initial_points = 5, 
-                random_state=4, verbose = True, acq_func = "LCB", x0 = guess_points)
+    result = gbrt_minimize(func=obj_func,dimensions=dimensions, n_calls=40, n_initial_points = 5, 
+                random_state=4, verbose = False, acq_func = "LCB", x0 = guess_points)
+    simulator.gate_count = result.fun
+    print("(nba, nby, nbb, wa, wy, wb): " +str(result.x))
     return 0
 
 def exact_cost(simulator, time, nb, epsilon): #relies on the use of density matrices
@@ -966,11 +969,19 @@ def heisenberg_hamiltonian(length, b_field, rng_seed):
 
 def set_local_nb(simulator, nb_list): #is chop using this 
     if type(simulator) != LRsim: raise TypeError("only works on LRsims")
+    simulator.nb = nb_list
     for i in range(3):
         simulator.internal_sims[i].nb = nb_list[i]
 
-#TODO fix the handeling of nb, check that sim trace distance is using density matrices or apply it. Make sure 
-# we construct the exact denwity matrix when using exact cost.
+def normalize_hamiltonian(hamiltonian_list):
+    temp_norms = []
+    norm_hamiltonian_list = []
+    for k in hamiltonian_list:
+        temp_norms.append(np.linalg.norm(k, ord=2)) 
+    h = max(temp_norms)
+    for xi in range(hamiltonian_list.shape[0]):
+        norm_hamiltonian_list.append(1/h * hamiltonian_list[xi])
+    return np.array(norm_hamiltonian_list)
 
 # Debugging purposes
 if __name__ == "__main__":
