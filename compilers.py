@@ -1,20 +1,13 @@
 import numpy as np
-import statistics
 from scipy import linalg
-from scipy import optimize
-from scipy import interpolate
-from numpy import inner, mat, random
-from scipy.special import psi
+import multiprocessing as mp
 # import time as time_this
-from sympy import S, symbols, printing
-from skopt import gp_minimize
-from skopt import gbrt_minimize
-from skopt.space import Real, Integer
-from skopt.utils import use_named_args
 import cProfile, pstats, io
+from itertools import repeat
+from copy import deepcopy
 
-from .utils import MC_SAMPLES_DEFAULT
-
+# from .utils import MC_SAMPLES_DEFAULT, graph_hamiltonian
+# import utils
 
 #A simple profiler. To use this, place @profile above the function of interest
 def profile(fnc):
@@ -617,27 +610,25 @@ class CompositeSim:
         self.qdrift_sim.set_initial_state(self.initial_state)
         return current_state
 
-    def simulate_mc(self, time, iterations, mc_samples=MC_SAMPLES_DEFAULT):
-        """
-        Represents a monte-carlo'd implementation of the QDrift channel to simulate the overall composite channel. This is specifically implemented as a 
-        starting point for allowing multiprocessing.
-        """
-        self.gate_count = 0
-        outer_loop_timesteps = compute_trotter_timesteps(2, time / (1. * iterations), self.outer_order)
-
-        current_state = np.copy(self.initial_state)
-        trotter_ham = self.trotter_sim.get_hamiltonian_list()
-        qdrift_ham = self.qdrift_sim.get_hamiltonian_list()
-        processed_trotter_ham = [mat.tolist() for mat in trotter_ham]
-        processed_trotter_ham.append(trotter_ham[0].shape)
-        processed_qdrift_ham = [mat.tolist() for mat in qdrift_ham]
-        processed_qdrift_ham.append(qdrift_ham[0].shape)
-
-
+    def to_multiprocessing_dictionary(self, time, iterations):
         # now we need a simple pickle-able function to return an ndarray representing the simulated output for time and iterations.
         # what do we provide as input?
+        trotter_ham = self.trotter_sim.get_hamiltonian_list()
+        qdrift_ham = self.qdrift_sim.get_hamiltonian_list()
+        if len(trotter_ham) > 0:
+            processed_trotter_ham = [mat.tolist() for mat in trotter_ham]
+            processed_trotter_ham.append(trotter_ham[0].shape)
+        else:
+            processed_trotter_ham = []
+        if len(qdrift_ham) > 0:
+            processed_qdrift_ham = [mat.tolist() for mat in qdrift_ham]
+            processed_qdrift_ham.append(qdrift_ham[0].shape)
+        else:
+            processed_qdrift_ham = []
         d = {}
-        d["initial_state"] = current_state.tolist()
+        state = np.copy(self.initial_state).tolist()
+        state.append(self.initial_state.shape)
+        d["initial_state"] = state
         d["trotter_hamiltonian"] = processed_trotter_ham
         d["qdrift_hamiltonian"] = processed_qdrift_ham
         d["inner_order"] = self.inner_order
@@ -647,10 +638,28 @@ class CompositeSim:
         d["iterations"] = iterations
         d["use_density_matrices"] = self.use_density_matrices
         d["rng_seed"] = self.rng_seed
+        return d
 
-        workers = Pool
+    def simulate_mc(self, time, iterations, mc_samples=100):
+        """
+        Represents a monte-carlo'd implementation of the QDrift channel to simulate the overall composite channel. This is specifically implemented as a 
+        starting point for allowing multiprocessing.
+        """
+        self.gate_count = 0
 
-    
+        final_state = np.zeros(self.initial_state.shape, dtype=self.initial_state.dtype)
+        dict_state = self.to_multiprocessing_dictionary(time, iterations)
+        argument_iterator = []
+        for _ in range(mc_samples):
+            argument_iterator.append((deepcopy(dict_state), np.random.randint(1)))
+        with mp.Pool() as pool:
+            states, shapes, gate_counts = zip(*pool.starmap(simulate_worker_thread, iter(argument_iterator)))
+            for ix in range(len(states)):
+                final_state += np.array(states[ix], dtype=final_state.dtype).reshape(shapes[ix])
+            final_state /= len(states)
+        self.gate_count = np.mean(gate_counts)
+        return final_state
+
     # Computes time evolution exactly. Returns the final state and makes no internal changes.
     def exact_final_state(self, time):
         h_trott = [self.trotter_norms[ix] * self.trotter_operators[ix] for ix in range(len(self.trotter_norms))]
@@ -661,6 +670,34 @@ class CompositeSim:
             return u @ self.initial_state @ u.conj().T
         else:
             return u @ self.initial_state
+
+def composite_sim_from_dictionary(d):
+    processed_trotter = d.get("trotter_hamiltonian", [])
+    processed_qdrift = d.get("qdrift_hamiltonian", [])
+    if len(processed_trotter) > 0:
+        shape = processed_trotter.pop(-1)
+        final_trotter = [np.array(mat).reshape(shape) for mat in processed_trotter]
+    else:
+        final_trotter = []
+    if len(processed_qdrift) > 0:
+        shape = processed_qdrift.pop(-1)
+        final_qdrift = [np.array(mat).reshape(shape) for mat in processed_qdrift]
+    else:
+        final_qdrift = []
+    ham_list = final_qdrift + final_trotter
+    sim = CompositeSim(hamiltonian_list=ham_list, inner_order=d.get("inner_order", 1), outer_order=d.get("outer_order", 1), verbose=True, nb=d.get("nb", 1), use_density_matrices=d.get("use_density_matrices", True), rng_seed=d.get("rng_seed", 1))
+    sim.set_partition(final_trotter, final_qdrift)
+    state = d.get("initial_state")
+    shape = state.pop(-1)
+    sim.set_initial_state(np.array(state).reshape(shape))
+    return sim
+
+def simulate_worker_thread(dict_state, rng_seed):
+    dict_state["rng_seed"] = rng_seed
+    simulator = composite_sim_from_dictionary(dict_state)
+    final_state = simulator.simulate(dict_state.get("time", 1e-3), iterations=dict_state.get("iterations", 1))
+    shape = final_state.shape
+    return (final_state.tolist(), shape, simulator.gate_count)
 
 # A Lieb-Robinson local composite simulator
 class LRsim: 
@@ -747,3 +784,10 @@ class LRsim:
 
         self.final_state = current_state
         return np.copy(self.final_state)
+
+if __name__ == "__main__":
+    from utils import graph_hamiltonian
+    ham = graph_hamiltonian(7,1,1)
+    sim = CompositeSim(hamiltonian_list=ham, use_density_matrices=True, verbose=True)
+    sim.randomize_initial_state()
+    sim.simulate_mc(1e-3, 2, mc_samples=8)

@@ -1,29 +1,18 @@
-from ast import And
-from asyncore import loop
-from mimetypes import init
-from operator import matmul
-import pickle
 # from telnetlib import AYT
 import numpy as np
-import matplotlib.pyplot as plt
 import statistics
 from scipy import linalg
 from scipy import optimize
-from scipy import interpolate
 import math
-from numpy import arange, linspace, outer, random
-import cmath
+from numpy import arange
 import time as time_this
 import scipy
 import json
 import os
-from sympy import S, symbols, printing
-from skopt import gp_minimize
 from skopt import gbrt_minimize
 from skopt.space import Real, Integer
 from skopt.utils import use_named_args
-import cProfile, pstats, io
-from compilers import CompositeSim, TrotterSim, QDriftSim, LRsim, profile, conditional_decorator
+from compilers import CompositeSim, TrotterSim, QDriftSim, LRsim
 
 MC_SAMPLES_DEFAULT = 100
 COST_LOOP_DEPTH = 30
