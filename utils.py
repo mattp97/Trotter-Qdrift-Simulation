@@ -163,10 +163,11 @@ def multi_trace_distance_sample(simulator, time, exact_final_state, iterations=1
     if type(simulator) == TrotterSim or len(simulator.qdrift_norms) == 0:
         ret = single_trace_distance_sample(simulator, time, exact_final_state, iterations=iterations, nbsamples=nbsamples)
     else:
-        sim_out =  np.zeros(simulator.initial_state.shape, dtype='complex128')
-        for _ in range(mc_samples):
-            sim_out += simulator.simulate(time, iterations)
-        sim_out /= mc_samples
+        # sim_out =  np.zeros(simulator.initial_state.shape, dtype='complex128')
+        # for _ in range(mc_samples):
+        #     sim_out += simulator.simulate(time, iterations)
+        # sim_out /= mc_samples
+        sim_out = simulator.simulate_mc(time, iterations, mc_samples)
         if simulator.use_density_matrices == False:
             dist =  trace_distance(np.outer(sim_out, np.copy(sim_out).conj().T), np.outer(exact_final_state, np.copy(exact_final_state).conj().T))
         else:
