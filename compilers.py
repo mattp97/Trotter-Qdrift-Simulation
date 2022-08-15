@@ -199,14 +199,14 @@ class TrotterSim:
         final_state = np.copy(self.initial_state)
         if self.use_density_matrices:
 
-            scrunch_op = [np.linalg.multi_dot(matrix_mul_list)]
-            scrunch_op_dagger = [np.copy(scrunch_op[0]).conj().T]
-            final_state = np.linalg.multi_dot(scrunch_op * iterations + [self.initial_state] + scrunch_op_dagger * iterations)
+            scrunch_op = np.linalg.multi_dot(matrix_mul_list)
+            scrunch_op_iters = np.linalg.matrix_power(scrunch_op, iterations)
+            final_state = scrunch_op_iters @ self.initial_state @ scrunch_op_iters.conj().T
             if np.abs(np.abs(np.trace(final_state)) - np.abs(np.trace(self.initial_state))) > 1e-12:
                 print("[Trotter_sim.simulate] Error: significant non-trace preserving operation was done.")
         else:
             scrunch_op = [np.linalg.multi_dot(matrix_mul_list)]
-            final_state = np.linalg.multi_dot(scrunch_op * iterations + [self.initial_state])
+            final_state = np.linalg.matrix_power(scrunch_op, iterations) @ self.initial_state
         
         # TODO: This only uses the gates used for one side if we use density matrix, is this reasonable?
         self.gate_count = len(matrix_mul_list) * iterations
