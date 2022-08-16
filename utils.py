@@ -494,6 +494,10 @@ def partition_sim(simulator, partition_type = "prob", chop_threshold = 0.5, opti
         partition_sim_optimal_chop(simulator, time, epsilon)
         simulator.partition_type = "optimal_chop"
 
+    elif partition_type=="exact_optimal_chop":
+        exact_optimal_chop(simulator, time, epsilon)
+        simulator.partition_type = "exact_optimal_chop"
+
     elif partition_type == "trotter":
         partition_sim_trotter(simulator)
         simulator.partition_type = "trotter"
@@ -544,7 +548,7 @@ def partition_sim_prob(simulator, time, epsilon, nb_scaling, optimize):
     simulator.set_partition(trotter, qdrift)
 
     # TODO: how to optimize this quantity? not sure what optimal is without computing gate counts?
-    # MATT.H - Not really sure if this is optimizing nb or how it's going about it. Need to fix.
+    # MATT.H - Not really sure if this is optimizing nb or how it's going about it. Need to fix. -- Squishes probability distribution
     if optimize and False:
         optimal_nb = optimize.minimize(prob_nb_optima, nb, method='Nelder-Mead', bounds = optimize.Bounds([0], [np.inf], keep_feasible = False)) #Nb attribute serves as an inital geuss in this partition
         nb_high = int(optimal_nb.x +1)
@@ -609,6 +613,7 @@ def partition_sim_chop(simulator, weight_threshold):
     simulator.set_partition(trotter, qdrift)
     return 0
 
+#MATT P- added spectral norms back to the class to make this more convinient. Did this without having to recompute norms, just keep track of them.
 def partition_sim_optimal_chop(simulator, time, epsilon):
     dimensions = [Real(name='weight', low = 0, high = max(simulator.spectral_norms))]
     @use_named_args(dimensions=dimensions)
@@ -619,6 +624,26 @@ def partition_sim_optimal_chop(simulator, time, epsilon):
     print("result.fun: ", result.fun)
     print("result.x: ", result.x)
     print("result:", result)
+
+def exact_optimal_chop(simulator, time, epsilon):
+    if type(simulator) != CompositeSim: raise TypeError("this partition only makes sense for simulators of the class CompositeSim")
+    dim1 = Integer(name = "nb", low=1, high = len(simulator.spectral_norms))
+    dim2 = Real(name = "w", low=min(simulator.spectral_norms), high = max(simulator.spectral_norms))
+    guess_point = [int((1/4)*len(simulator.spectral_norms)), statistics.median(simulator.spectral_norms)]
+    dimensions = [dim1, dim2]
+
+    @use_named_args(dimensions=dimensions)
+    def obj_func(nb, w):
+        simulator.nb = nb
+        partition_sim(simulator, "chop", chop_threshold=w)
+        return exact_cost(simulator, time, nb, epsilon)
+    
+    result = gbrt_minimize(func=obj_func,dimensions=dimensions, n_calls=25, n_initial_points = 5, 
+                random_state=4, verbose = True, acq_func = "LCB", x0 = guess_point)
+
+    simulator.gate_count = result.fun
+    print("result.fun: ", result.fun)
+    print("result.x: ", result.x)
 
 # Let boosted regression trees try their best to come up with good probabilities
 # Inputs: self-explanatory
@@ -828,9 +853,9 @@ def optimal_local_chop(simulator, time, epsilon): ### needs exact cost function 
     dim1 = Integer(name = "nb_a", low=1, high = len(simulator.spectral_norms[0]))
     dim2 = Integer(name="nb_y", low=1, high = len(simulator.spectral_norms[1]))
     dim3 = Integer(name="nb_b", low=1, high = len(simulator.spectral_norms[2]))
-    dim4 = Real(name = "w_a", low=0, high = max(simulator.spectral_norms[0]))
-    dim5 = Real(name = "w_y", low=0, high = max(simulator.spectral_norms[1]))
-    dim6 = Real(name = "w_b", low=0, high = max(simulator.spectral_norms[2]))
+    dim4 = Real(name = "w_a", low=min(simulator.spectral_norms[0]), high = max(simulator.spectral_norms[0]))
+    dim5 = Real(name = "w_y", low=min(simulator.spectral_norms[1]), high = max(simulator.spectral_norms[1]))
+    dim6 = Real(name = "w_b", low=min(simulator.spectral_norms[2]), high = max(simulator.spectral_norms[2]))
 
     for j in range(3):
         guess_points.append(int((1/2)*len(simulator.spectral_norms[j])))
@@ -848,7 +873,7 @@ def optimal_local_chop(simulator, time, epsilon): ### needs exact cost function 
         return exact_cost(simulator, time, nb_list, epsilon)
     
     result = gbrt_minimize(func=obj_func,dimensions=dimensions, n_calls=40, n_initial_points = 5, 
-                random_state=4, verbose = False, acq_func = "LCB", x0 = guess_points)
+                random_state=4, verbose = False, acq_func = "LCB", x0 = guess_points, n_jobs=-1)
     simulator.gate_count = result.fun
     print("(nba, nby, nbb, wa, wy, wb): " +str(result.x))
     return 0
@@ -857,7 +882,7 @@ def exact_cost(simulator, time, nb, epsilon): #relies on the use of density matr
     simulator.gate_count = 0
     if type(simulator.partition_type) == type(None): raise TypeError("call a partition function before calling this function")
     if type(simulator) == (CompositeSim): 
-        if type(nb) != int: raise TypeError("this requires a single integer nb")
+        if type(nb) == list: raise TypeError("this requires a single integer nb")
         simulator.nb = nb #redundancy
         if simulator.partition_type == "qdrift":
             get_trace_dist = lambda x : sim_trace_distance(simulator=simulator, time=time, iterations=1, nb = x)

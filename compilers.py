@@ -197,15 +197,15 @@ class TrotterSim:
         # compute final output, let multi_dot figure out the cheapest way to perform all the matrix-matrix
         # or matrix-vec multiplications. ALSO ITERATIONS IS HANDLED HERE in a really slick/sneaky way.
         final_state = np.copy(self.initial_state)
+        if len(matrix_mul_list) == 1:
+                scrunch_op = matrix_mul_list[0]
+        else: scrunch_op = np.linalg.multi_dot(matrix_mul_list)
         if self.use_density_matrices:
-
-            scrunch_op = np.linalg.multi_dot(matrix_mul_list)
             scrunch_op_iters = np.linalg.matrix_power(scrunch_op, iterations)
             final_state = scrunch_op_iters @ self.initial_state @ scrunch_op_iters.conj().T
             if np.abs(np.abs(np.trace(final_state)) - np.abs(np.trace(self.initial_state))) > 1e-12:
                 print("[Trotter_sim.simulate] Error: significant non-trace preserving operation was done.")
         else:
-            scrunch_op = [np.linalg.multi_dot(matrix_mul_list)]
             final_state = np.linalg.matrix_power(scrunch_op, iterations) @ self.initial_state
         
         # TODO: This only uses the gates used for one side if we use density matrix, is this reasonable?
@@ -433,6 +433,7 @@ class CompositeSim:
         self.trotter_norms = []
         self.qdrift_operators = []
         self.qdrift_norms = []
+        self.spectral_norms = []
         if len(hamiltonian_list) > 0:
             self.hilbert_dim = hamiltonian_list[0].shape[0] 
         else:
@@ -447,7 +448,7 @@ class CompositeSim:
         self.qdrift_sim = QDriftSim(use_density_matrices=use_density_matrices, exact_qd=exact_qd)
         self.trotter_sim = TrotterSim(order = inner_order, use_density_matrices=use_density_matrices)
 
-        self.nb = nb #number of Qdrift channel samples. Useful to define as an attribute if we are choosing whether or not to optimize over it. Only used in analytic cost optimization
+        self.nb = nb #number of Qdrift channel samples. Useful to define as an attribute if we are choosing whether or not to optimize over it.
 
         self.gate_count = 0 
         self.partition_type = None
@@ -566,6 +567,9 @@ class CompositeSim:
             temp_norm = np.linalg.norm(matrix, ord = 2)
             self.qdrift_norms.append(temp_norm)
             self.qdrift_operators.append(matrix / temp_norm)
+        
+        self.spectral_norms = []
+        self.spectral_norms = self.trotter_norms + self.qdrift_norms
 
         # TODO check clear and then set
         if len(qdrift_list) > 0:
