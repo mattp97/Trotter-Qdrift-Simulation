@@ -194,8 +194,6 @@ class TrotterSim:
             exp_h = self.exp_op_cache[(ix, timestep)]
             matrix_mul_list.append(exp_h)
 
-        # compute final output, let multi_dot figure out the cheapest way to perform all the matrix-matrix
-        # or matrix-vec multiplications. ALSO ITERATIONS IS HANDLED HERE in a really slick/sneaky way.
         final_state = np.copy(self.initial_state)
         if len(matrix_mul_list) == 1:
                 scrunch_op = matrix_mul_list[0]
