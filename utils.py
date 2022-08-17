@@ -627,7 +627,7 @@ def partition_sim_optimal_chop(simulator, time, epsilon):
 def exact_optimal_chop(simulator, time, epsilon):
     if type(simulator) != CompositeSim: raise TypeError("this partition only makes sense for simulators of the class CompositeSim")
     dim1 = Integer(name = "nb", low=1, high = len(simulator.spectral_norms))
-    dim2 = Real(name = "w", low=min(simulator.spectral_norms), high = max(simulator.spectral_norms))
+    dim2 = Real(name = "w", low=min(simulator.spectral_norms), high = max(simulator.spectral_norms) + min(simulator.spectral_norms)/10)
     guess_point = [int((1/4)*len(simulator.spectral_norms)), statistics.median(simulator.spectral_norms)]
     dimensions = [dim1, dim2]
 
@@ -638,7 +638,7 @@ def exact_optimal_chop(simulator, time, epsilon):
         return exact_cost(simulator, time, nb, epsilon)
     
     result = gbrt_minimize(func=obj_func,dimensions=dimensions, n_calls=25, n_initial_points = 5, 
-                random_state=4, verbose = True, acq_func = "LCB", x0 = guess_point)
+                random_state=4, verbose = False, acq_func = "LCB", x0 = guess_point, n_jobs=-1)
 
     simulator.gate_count = result.fun
     print("result.fun: ", result.fun)
@@ -849,12 +849,13 @@ def optimal_local_chop(simulator, time, epsilon): ### needs exact cost function 
     if type(simulator) != LRsim: raise TypeError("only works on LRsims")
     guess_points = []
     dimensions = []
+    delta = min(simulator.spectral_norms[0] + simulator.spectral_norms[1] + simulator.spectral_norms[2])/10
     dim1 = Integer(name = "nb_a", low=1, high = len(simulator.spectral_norms[0]))
     dim2 = Integer(name="nb_y", low=1, high = len(simulator.spectral_norms[1]))
     dim3 = Integer(name="nb_b", low=1, high = len(simulator.spectral_norms[2]))
-    dim4 = Real(name = "w_a", low=min(simulator.spectral_norms[0]), high = max(simulator.spectral_norms[0]))
-    dim5 = Real(name = "w_y", low=min(simulator.spectral_norms[1]), high = max(simulator.spectral_norms[1]))
-    dim6 = Real(name = "w_b", low=min(simulator.spectral_norms[2]), high = max(simulator.spectral_norms[2]))
+    dim4 = Real(name = "w_a", low=min(simulator.spectral_norms[0]), high = max(simulator.spectral_norms[0]) + delta)
+    dim5 = Real(name = "w_y", low=min(simulator.spectral_norms[1]), high = max(simulator.spectral_norms[1]) + delta)
+    dim6 = Real(name = "w_b", low=min(simulator.spectral_norms[2]), high = max(simulator.spectral_norms[2]) + delta) # delta is too allow everything to go into QDrift (bed on the \geq chop condition)
 
     for j in range(3):
         guess_points.append(int((1/2)*len(simulator.spectral_norms[j])))
@@ -978,7 +979,7 @@ def heisenberg_hamiltonian(length, b_field, rng_seed):
             for j in range (lat_points):
                 if (i == j+1):
                     alpha = np.random.normal()
-                    hamiltonian_list.append(10**alpha * np.matmul(initialize_operator(k, i, lat_points), initialize_operator(k, j, lat_points)))
+                    hamiltonian_list.append(2**alpha * np.matmul(initialize_operator(k, i, lat_points), initialize_operator(k, j, lat_points)))
                     indices.append([i, j])
 
                 #if ((i==0) and (j==lat_points-1)): #periodic BC (we dont want this as we want to limit connectivity) 
