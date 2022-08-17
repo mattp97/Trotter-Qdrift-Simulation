@@ -94,7 +94,8 @@ def process_settings_to_save(unprocessed_settings):
             val = unprocessed_settings.get(setting, "gate_cost")
             ret[setting] = val
         if setting == 'mc_samples':
-            val = unprocessed_settings.get(setting, '10')
+            print("in mc_samples????")
+            val = unprocessed_settings.get(setting, '1000')
             ret[setting] = int(val)
     return ret
 
@@ -169,7 +170,9 @@ def setup_manage_settings(base_dir):
                 print("[setup] incorrect input. format is \'key=val\'. Only use one = sign.")
     processed_settings = process_settings_to_save(settings)
     print("[setup] configuration completed. final settings:")
-    print(processed_settings)
+    print("*" * 60)
+    for k,v in processed_settings.items():
+        print(k, "=", v)
     save_to_new = input("[setup] Enter the filename (without \'.pickle\' extension) you'd like to save to (empty keeps name and rewrites). WARNING - can overwrite existing settings: ")
     if save_to_new == "":
         print("[setup] overwriting existing file: ", settings_file)

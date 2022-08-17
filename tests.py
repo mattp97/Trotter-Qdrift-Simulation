@@ -27,7 +27,8 @@ MINIMAL_SETTINGS = [EXPERIMENT_LABEL,
                     'infidelity_threshold',
                     'num_state_samples',
                     'base_directory',
-                    'test_type'
+                    'test_type',
+                    'mc_samples',
 ]
 
 # For coordinating runs. 

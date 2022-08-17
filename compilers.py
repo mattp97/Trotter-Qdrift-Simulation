@@ -643,6 +643,7 @@ class CompositeSim:
         Represents a monte-carlo'd implementation of the QDrift channel to simulate the overall composite channel. This is specifically implemented as a 
         starting point for allowing multiprocessing.
         """
+        print("[simulate_mc] monte carlo samples:", mc_samples)
         self.gate_count = 0
 
         final_state = np.zeros(self.initial_state.shape, dtype=self.initial_state.dtype)
