@@ -760,10 +760,10 @@ def hamiltonian_localizer_1d(local_hamiltonian, sub_block_size):
     b_terms, b_index = [], []
     terms, indices, length = local_hamiltonian
     midpoint = int(length/2) 
-    start = midpoint - (int(sub_block_size/2))
-    stop = start + sub_block_size 
-    if start < 1:
-        raise Exception("sub block is the size of or larger than the Hamiltonian")
+    # start = midpoint - (int(sub_block_size/2))
+    # stop = start + sub_block_size 
+    # if start < 1:
+    #     raise Exception("sub block is the size of or larger than the Hamiltonian")
     
     temp_norms = []
     for k in terms:
@@ -771,23 +771,61 @@ def hamiltonian_localizer_1d(local_hamiltonian, sub_block_size):
     
     h = max(temp_norms) #normalization factor (LR algorithm requires spectral norm < 1)
     
+    bound = []
+    upper = midpoint
+    lower = midpoint
+    iv = 1
+
+    bound.append(midpoint)
+    while iv < sub_block_size:
+        if iv % 2 == 0:
+            bound.append(upper + 1)
+            upper +=1
+        else:
+            bound.append(lower - 1)
+            lower += -1
+            if midpoint - iv < 0: raise Exception("sub block is the size of or larger than the Hamiltonian")
+        iv += 1
+    bound = set(bound)
+    print(bound)
+
     ix = 0
     while ix < len(terms): 
-        if not set(indices[ix]).isdisjoint(arange(start, stop)) == True: #Y region
-            y_terms.append(1/h * terms[ix])
-            #y_index.append(indices[ix])
+        if sub_block_size == 1:
+            if set(indices[ix]) == bound:
+                y_terms.append(1/h * terms[ix])
+                y_index.append(indices[ix])
+        else:
+            if set(indices[ix]).issubset(bound):
+                y_terms.append(1/h * terms[ix])
+                y_index.append(indices[ix])
 
-        if not set(indices[ix]).isdisjoint(arange(start, len(terms))) == True: #B region
-            b_terms.append(1/h *terms[ix])
-            #b_index.append(indices[ix])
-
-        if not set(indices[ix]).isdisjoint(arange(0, stop)): #A region
+        if set(indices[ix]).issubset(set(arange(0, midpoint)).union(bound)): #A region
             a_terms.append(1/h * terms[ix])
-            #a_index.append(indices[ix])
+            a_index.append(indices[ix])
+
+        if set(indices[ix]).issubset(set(arange(midpoint, length)).union(bound)): #B region
+            b_terms.append(1/h *terms[ix])
+            b_index.append(indices[ix])
+
         ix += 1
+        # if set(indices[ix]).issubset(arange(0, midpoint)):
+        #     a_terms.append(1/h * terms[ix])
+        #     a_index.append(indices[ix])
+        # else:
+        #     b_terms.append(1/h *terms[ix])
+        #     b_index.append(indices[ix])
+        
+        # if not set(indices[ix]).isdisjoint(arange(start, stop)) == True: #Y region
+        #     y_terms.append(1/h * terms[ix])
+        #     y_index.append(indices[ix])
+
+    print(a_index)
+    print(y_index)
+    print(b_index)
     if ((len(a_terms) == 0) or (len(b_terms) == 0) or (len(y_terms) == 0)):
         raise Exception("poor block choice, one of the blocks is empty")
-    return (np.array(a_terms), np.array(y_terms), np.array(b_terms))
+    return (np.array(a_terms), np.array(y_terms), np.array(b_terms)) #A and B here are really the AUB and BUC from the paper
 
 def local_partition(simulator, partition, weights = None, time = 0.01, epsilon = 0.001): #weights is a list with ordering A, Y, B
         if type(simulator) != LRsim: raise TypeError("only works on LRsims")
