@@ -546,6 +546,9 @@ class CompositeSim:
         self.set_partition(hamiltonian_list, [])
         self.reset_initial_state()
 
+    def set_exact_qd(self, val):
+        self.qdrift_sim.exact_qd = val
+    
     # Inputs: trotter_list - a python list of numpy arrays, each element is a single term in a hamiltonian
     #         qdrift_list - same but these terms go into the qdrift simulator. 
     # Note: each of these matrices should NOT be normalized, all normalization should be done internally
@@ -647,6 +650,7 @@ class CompositeSim:
         Represents a monte-carlo'd implementation of the QDrift channel to simulate the overall composite channel. This is specifically implemented as a 
         starting point for allowing multiprocessing.
         """
+        print("[simulate_mc] monte carlo samples:", mc_samples)
         self.gate_count = 0
 
         final_state = np.zeros(self.initial_state.shape, dtype=self.initial_state.dtype)

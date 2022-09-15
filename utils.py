@@ -167,7 +167,10 @@ def multi_trace_distance_sample(simulator, time, exact_final_state, iterations=1
         # for _ in range(mc_samples):
         #     sim_out += simulator.simulate(time, iterations)
         # sim_out /= mc_samples
-        sim_out = simulator.simulate_mc(time, iterations, mc_samples)
+        if type(simulator) != CompositeSim: raise Exception("Error please use composite simulators")
+        simulator.set_exact_qd(True)
+        sim_out = simulator.simulate(time, iterations, mc_samples)
+        
         if simulator.use_density_matrices == False:
             dist =  trace_distance(np.outer(sim_out, np.copy(sim_out).conj().T), np.outer(exact_final_state, np.copy(exact_final_state).conj().T))
         else:
@@ -264,7 +267,10 @@ def find_optimal_cost(simulator, time, epsilon, heuristic = -1, use_infidelity =
         print("*" * 75)
         print("[find_optimal_cost] computing cost for simulator with partitioning:")
         simulator.print_partition()
-        print("[find_optimal_cost] time = ", time, ", epsilon =", epsilon)
+        print("[find_optimal_cost] time = ", time)
+        print("epsilon =", epsilon)
+        print("use_infidelity=", use_infidelity)
+        print("mc_samples=", mc_samples)
 
     # Make sure that density matrices are turned on if we use trace distance
     if use_infidelity == False:
@@ -323,6 +329,22 @@ def find_optimal_cost(simulator, time, epsilon, heuristic = -1, use_infidelity =
         print("[find_optimal_cost] converged to iterations = ", iter_upper)
         print("[find_optimal_cost] final infidelity =", ret[0], " +- ", ret[1])
         print("[find_optimal_cost] final gate cost: ", ret[-1])
+        # Write to intermediate file.
+        json_path = os.getenv("SCRATCH")
+        if json_path[-1] != '/':
+            json_path += '/'
+        json_path += "outputs/gate_cost_" + str(len(simulator.trotter_norms)) + "_" + str(len(simulator.qdrift_norms)) + "_" + str(time) + ".json"
+        try:
+            r = {}
+            r["time"] = time
+            r["cost"] = ret[-1]
+            r["iters"] = iter_upper
+            r["avg_err"] = ret[0]
+            json.dump(r, open(json_path, 'w'))
+        except:
+            print("[find_crossover_time] tried to dump json it didn't work")
+            print("file name was:", json_path)
+
     return (ret[-1], iter_upper)
 
 def crossover_criteria_met(cost1, cost2):
