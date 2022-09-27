@@ -18,7 +18,6 @@ if __name__ == "__main__":
     epsilon=0.001
     
     CompSim_results = dict()
-    local_trot_results = dict()
     TrotSim1_results = dict()
     TrotSim2_results = dict()
     QDSim_results = dict()
