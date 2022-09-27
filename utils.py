@@ -169,7 +169,7 @@ def multi_trace_distance_sample(simulator, time, exact_final_state, iterations=1
         # sim_out /= mc_samples
         if type(simulator) != CompositeSim: raise Exception("Error please use composite simulators")
         simulator.set_exact_qd(True)
-        sim_out = simulator.simulate(time, iterations, mc_samples)
+        sim_out = simulator.simulate(time, iterations)
         
         if simulator.use_density_matrices == False:
             dist =  trace_distance(np.outer(sim_out, np.copy(sim_out).conj().T), np.outer(exact_final_state, np.copy(exact_final_state).conj().T))
