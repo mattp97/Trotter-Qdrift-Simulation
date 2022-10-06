@@ -165,10 +165,10 @@ class TrotterSim:
 
     def reset_init_state(self):
         if len(self.hamiltonian_list) > 0:
-            self.initial_state = np.zeros((self.hamiltonian_list[0].shape[0]))
+            self.initial_state = np.zeros((self.hamiltonian_list[0].shape[0], 1))
             self.initial_state[0] = 1.
-        if self.use_density_matrices == True:
-            self.initial_state = np.outer(self.initial_state, self.initial_state.conj())
+            if self.use_density_matrices == True:
+                self.initial_state = np.outer(self.initial_state, self.initial_state.conj())
         #else:
             #print("[TrotterSim.reset_init_state] I don't have any dimensions")
 
