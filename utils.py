@@ -12,7 +12,7 @@ import os
 from skopt import gbrt_minimize
 from skopt.space import Real, Integer
 from skopt.utils import use_named_args
-from compilers import CompositeSim, TrotterSim, QDriftSim, LRsim, qmc_qdrift
+from compilers import CompositeSim, TrotterSim, QDriftSim, LRsim
 
 MC_SAMPLES_DEFAULT = 100
 COST_LOOP_DEPTH = 30
@@ -1007,13 +1007,11 @@ def sim_trace_distance(simulator, time, iterations, nb = None):
     if type(simulator) == CompositeSim:
         if type(nb) == type(None): raise TypeError("required to set an nb")
         simulator.nb = nb
-        return trace_distance(simulator.simulate(time, iterations), exact_time_evolution_density(simulator.unparsed_hamiltonian, 
+        if simulator.imag_time == False:
+            return trace_distance(simulator.simulate(time, iterations), exact_time_evolution_density(simulator.unparsed_hamiltonian, 
                             time, simulator.initial_state))
-
-    elif type(simulator) == qmc_qdrift: #other imaginary time channels can go here
-        if type(nb) == type(None): raise TypeError("required to set an nb")
-        simulator.nb = nb
-        return trace_distance(simulator.simulate(time), exact_imaginary_channel(simulator.unparsed_hamiltonian, 
+        else:
+            return trace_distance(simulator.simulate(time, iterations), exact_imaginary_channel(simulator.unparsed_hamiltonian, 
                             time, simulator.initial_state))
 
     elif type(simulator) == LRsim:
