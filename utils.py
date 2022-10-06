@@ -12,7 +12,7 @@ import os
 from skopt import gbrt_minimize
 from skopt.space import Real, Integer
 from skopt.utils import use_named_args
-from compilers import CompositeSim, TrotterSim, QDriftSim, LRsim
+from compilers import CompositeSim, TrotterSim, QDriftSim, LRsim, qmc_qdrift
 
 MC_SAMPLES_DEFAULT = 100
 COST_LOOP_DEPTH = 30
@@ -1010,6 +1010,12 @@ def sim_trace_distance(simulator, time, iterations, nb = None):
         return trace_distance(simulator.simulate(time, iterations), exact_time_evolution_density(simulator.unparsed_hamiltonian, 
                             time, simulator.initial_state))
 
+    elif type(simulator) == qmc_qdrift: #other imaginary time channels can go here
+        if type(nb) == type(None): raise TypeError("required to set an nb")
+        simulator.nb = nb
+        return trace_distance(simulator.simulate(time), exact_imaginary_channel(simulator.unparsed_hamiltonian, 
+                            time, simulator.initial_state))
+
     elif type(simulator) == LRsim:
         if type(nb) != list: raise TypeError("local sims require an nb value per site")
         set_local_nb(simulator, nb)
@@ -1068,6 +1074,12 @@ def normalize_hamiltonian(hamiltonian_list):
     for xi in range(hamiltonian_list.shape[0]):
         norm_hamiltonian_list.append(1/h * hamiltonian_list[xi])
     return np.array(norm_hamiltonian_list)
+
+# Imaginary time evolution -- this sectiuon is used for tools to help with imaginary time QDrift for Monte-Carlo
+def exact_imaginary_channel(hamiltonian_list, i_time, initial_rho):
+    evol_op = linalg.expm(-1 * i_time * sum(hamiltonian_list))
+    ret = evol_op * initial_rho * evol_op
+    return ret / np.trace(ret)
 
 # Debugging purposes
 if __name__ == "__main__":

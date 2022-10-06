@@ -224,7 +224,7 @@ class TrotterSim:
 # - rng_seed: Seed for the random number generator so results are reproducible.
     
 class QDriftSim:
-    def __init__(self, hamiltonian_list = [], rng_seed = 1, use_density_matrices=False, exact_qd=False):
+    def __init__(self, hamiltonian_list = [], rng_seed = 1, use_density_matrices=False, exact_qd=False, imag_time=False):
         self.hamiltonian_list = []
         self.spectral_norms = []
         self.rng_seed = rng_seed
@@ -232,6 +232,7 @@ class QDriftSim:
         self.exp_op_cache = dict()
         self.conj_cache = dict()
         self.exact_qd=exact_qd #adding this to choose to build E[]
+        self.imag_time = imag_time
 
         # Use the first computational basis state as the initial state until the user specifies.
         self.prep_hamiltonian_lists(hamiltonian_list)
@@ -344,16 +345,25 @@ class QDriftSim:
             op_list = []
             for ix in obtained_samples:
                 if ix not in self.exp_op_cache:
-                    self.exp_op_cache[ix] = linalg.expm(1.j * tau * self.hamiltonian_list[ix])
+                    if self.imag_time == False:
+                        self.exp_op_cache[ix] = linalg.expm(1.j * tau * self.hamiltonian_list[ix])
+                    else: 
+                        self.exp_op_cache[ix] = linalg.expm(-1 * tau * self.hamiltonian_list[ix])
                 op_list.append(self.exp_op_cache[ix])
 
             final_state = np.copy(self.initial_state)
             if self.use_density_matrices:
-                reversed = op_list.copy()
-                reversed.reverse()
-                for ix in range(len(reversed)):
-                    reversed[ix] = reversed[ix].conj().T
-                final_state = np.linalg.multi_dot(op_list + [self.initial_state] + reversed)
+                if self.imag_time == False:
+                    reversed = op_list.copy()
+                    reversed.reverse()
+                    for ix in range(len(reversed)):
+                        reversed[ix] = reversed[ix].conj().T
+                    final_state = np.linalg.multi_dot(op_list + [self.initial_state] + reversed)
+
+                else:
+                    channel_out = np.linalg.multi_dot(op_list + [self.initial_state] + op_list)
+                    final_state =  channel_out / np.trace(channel_out)
+
                 if np.abs(np.abs(np.trace(final_state)) - np.abs(np.trace(self.initial_state))) > 1e-12:
                     print("[Trotter_sim.simulate] Error: significant non-trace preserving operation was done.")
 
@@ -363,6 +373,16 @@ class QDriftSim:
             self.final_state = final_state
             self.gate_count = samples
             return final_state
+
+            # if self.use_density_matrices:
+            #     channel_out = np.linalg.multi_dot(op_list + [self.initial_state] + op_list)
+            #     final_state =  channel_out / np.trace(channel_out)
+            #     if np.abs(np.abs(np.trace(final_state)) - np.abs(np.trace(self.initial_state))) > 1e-12:
+            #         print("[Trotter_sim.simulate] Error: significant non-trace preserving operation was done.")
+
+            # else:
+            #     evol_out = np.linalg.multi_dot(op_list + [self.initial_state])
+            #     final_state = evol_out / np.linalg.norm(evol_out, ord=2)
 
     def construct_density(self, time, samples):
         if self.use_density_matrices == False:
@@ -383,20 +403,30 @@ class QDriftSim:
             self.exp_op_cache["time"] = time
             self.exp_op_cache["samples"] = samples
             for k in range(len(self.spectral_norms)):
-                self.exp_op_cache[k] = linalg.expm(1.j * tau * self.hamiltonian_list[k])
-                self.conj_cache[k] = self.exp_op_cache.get(k).conj().T
+                if self.imag_time == False: #only need if time is real
+                    self.exp_op_cache[k] = linalg.expm(1.j * tau * self.hamiltonian_list[k])
+                    self.conj_cache[k] = self.exp_op_cache.get(k).conj().T
+                else:
+                    self.exp_op_cache[k] = linalg.expm(-1 * tau * self.hamiltonian_list[k])
 
         rho = np.copy(self.initial_state)
-        for i in range(samples):
-            channel_output = np.zeros((self.hamiltonian_list[0].shape[0], self.hamiltonian_list[0].shape[0]), dtype = 'complex')
-            for j in range(len(self.spectral_norms)):
-                channel_output += (self.spectral_norms[j]/lamb) * self.exp_op_cache.get(j) @ rho @ self.conj_cache.get(j) #an error is creeping in here (I think for the case len(b) = 1)
-            rho = channel_output
+        if self.imag_time == False:
+            for i in range(samples):
+                channel_output = np.zeros((self.hamiltonian_list[0].shape[0], self.hamiltonian_list[0].shape[0]), dtype = 'complex')
+                for j in range(len(self.spectral_norms)):
+                    channel_output += (self.spectral_norms[j]/lamb) * self.exp_op_cache.get(j) @ rho @ self.conj_cache.get(j) #an error is creeping in here (I think for the case len(b) = 1)
+                rho = channel_output
+            
+        else:
+            for i in range(samples):
+                channel_output = np.zeros((self.hamiltonian_list[0].shape[0], self.hamiltonian_list[0].shape[0]), dtype = 'complex')
+                for j in range(len(self.spectral_norms)):
+                    channel_output += (self.spectral_norms[j]/lamb) * self.exp_op_cache.get(j) @ rho @ self.exp_op_cache.get(j) #an error is creeping in here (I think for the case len(b) = 1)
+                rho = channel_output / np.trace(channel_output)
 
         self.final_state = rho
         self.gate_count = samples
         return np.copy(self.final_state)
-
 
 
 ###############################################################################################################################################################
@@ -425,7 +455,8 @@ class CompositeSim:
                 state_rand = False,
                 use_density_matrices = False,
                 exact_qd = False,
-                verbose = False
+                verbose = False,
+                imag_time = False
                 ):
         self.trotter_operators = []
         self.trotter_norms = []
@@ -440,11 +471,12 @@ class CompositeSim:
         self.rng_seed = rng_seed
         self.outer_order = outer_order 
         self.inner_order = inner_order
+        self.imag_time = imag_time
 
         self.state_rand = state_rand
 
-        self.qdrift_sim = QDriftSim(use_density_matrices=use_density_matrices, exact_qd=exact_qd)
-        self.trotter_sim = TrotterSim(order = inner_order, use_density_matrices=use_density_matrices)
+        self.qdrift_sim = QDriftSim(use_density_matrices=use_density_matrices, exact_qd=exact_qd, imag_time=imag_time)
+        self.trotter_sim = TrotterSim(order = inner_order, use_density_matrices=use_density_matrices, imag_time=imag_time)
 
         self.nb = nb #number of Qdrift channel samples. Useful to define as an attribute if we are choosing whether or not to optimize over it.
 
@@ -791,6 +823,197 @@ class LRsim:
 
         self.final_state = current_state
         return np.copy(self.final_state)
+
+class qmc_qdrift: #imaginary time changes to qd as well as sample handling for convinience
+    def __init__(self, hamiltonian_list = [], nb = 1, rng_seed = 1, state_rand = True, use_density_matrices=True, exact_qd=True):
+        self.hamiltonian_list = []
+        self.spectral_norms = []
+        self.rng_seed = rng_seed
+        self.gate_count = 0
+        self.exp_op_cache = dict()
+        self.exact_qd=exact_qd #adding this to choose to build E[]
+        self.nb = nb
+        self.state_rand = state_rand
+        self.unparsed_hamiltonian = np.copy(hamiltonian_list)
+
+        if len(hamiltonian_list) > 0:
+            self.hilbert_dim = hamiltonian_list[0].shape[0] 
+        else:
+            self.hilbert_dim = 0
+
+        if self.hilbert_dim > 0:
+            if self.state_rand == True:
+                self.initial_state = initial_state_randomizer(self.hilbert_dim)
+            else:
+                # Use the first computational basis state as the initial state until the user specifies.
+                self.initial_state = np.zeros((self.hilbert_dim, 1))
+                self.initial_state[0] = 1.
+        else:
+            self.initial_state = np.zeros((1,1))
+        self.use_density_matrices = use_density_matrices
+        if use_density_matrices == True:
+            self.initial_state = np.outer(self.initial_state, self.initial_state.conj())
+
+        # # Use the first computational basis state as the initial state until the user specifies.
+        # self.prep_hamiltonian_lists(hamiltonian_list)
+        # if len(hamiltonian_list) == 0:
+        #     self.initial_state = np.zeros((1,1))
+        # else:
+        #     self.initial_state = np.zeros((hamiltonian_list[0].shape[0]))
+        # self.initial_state[0] = 1
+
+        # self.use_density_matrices = use_density_matrices
+        # if use_density_matrices == True:
+        #     self.initial_state = np.outer(self.initial_state, self.initial_state.conj())
+        # self.final_state = np.copy(self.initial_state)
+        
+        np.random.seed(self.rng_seed)
+
+    def prep_hamiltonian_lists(self, ham_list):
+        for h in ham_list:
+            temp_norm = np.linalg.norm(h, ord=2)
+            if temp_norm < FLOATING_POINT_PRECISION:
+                print("[prep_hamiltonian_lists] Spectral norm of a hamiltonian found to be 0")
+                self.spectral_norms = []
+                self.hamiltonian_list = []
+                return 1
+            self.spectral_norms.append(temp_norm)
+            self.hamiltonian_list.append(h / temp_norm)
+        return 0
+    
+    def get_hamiltonian_list(self):
+        ret = []
+        for ix in range(len(self.hamiltonian_list)):
+            ret.append(np.copy(self.hamiltonian_list[ix]) * self.spectral_norms[ix])
+        return ret
+
+    # Do some sanity checking before storing. Check if input is proper dimensions and an actual
+    # quantum state.
+    # TODO: check inputs match? aka density matrix vs not
+    def set_initial_state(self, psi_init):
+        if len(self.hamiltonian_list) == 0:
+            return 
+        hilbert_dim = self.hamiltonian_list[0].shape[0]
+        is_input_density_matrix = (psi_init.shape[0] == hilbert_dim) and (psi_init.shape[1] == hilbert_dim)
+        if self.use_density_matrices and is_input_density_matrix:
+            self.initial_state = psi_init
+        elif self.use_density_matrices and (is_input_density_matrix == False):
+            self.initial_state = np.outer(psi_init, np.copy(psi_init).conj().T)
+        elif (self.use_density_matrices == False) and (is_input_density_matrix == False):
+            self.initial_state = psi_init
+        else:
+            print("[QDriftSim.set_initial_state] Tried to set a density matrix to initial state for non-density matrix sim. Doing nothing.")
+
+    def reset_init_state(self):
+        if len(self.hamiltonian_list) > 0:
+            self.initial_state = np.zeros((self.hamiltonian_list[0].shape[0]))
+            self.initial_state[0] = 1.
+        if self.use_density_matrices:
+            self.initial_state = np.outer(self.initial_state, self.initial_state.conj())
+
+    # Assumes terms are already normalized
+    def set_hamiltonian(self, mat_list = [], norm_list = []):
+        if len(mat_list) != len(norm_list):
+            print("[QD - set_hamiltonian] Incorrect length arrays")
+            return 1
+        self.hamiltonian_list = mat_list
+        self.spectral_norms = norm_list
+
+    def clear_hamiltonian(self):
+        self.hamiltonian_list = []
+        self.spectral_norms = []
+        return 0
+
+    # RETURNS A 0 BASED INDEX TO BE USED IN CODE!!
+    def draw_hamiltonian_samples(self, num_samples):
+        samples = []
+        for i in range(num_samples):
+            sample = np.random.random()
+            tot = 0.
+            lamb = np.sum(self.spectral_norms)
+            for ix in range(len(self.spectral_norms)):
+                if sample > tot and sample < tot + self.spectral_norms[ix] / lamb:
+                    index = ix
+                    break
+                tot += self.spectral_norms[ix] / lamb
+            samples.append(index)
+        return samples
+    
+    def simulate(self, time): #original function self.nb -> samples
+        if self.exact_qd == True:
+            return self.construct_density(time, samples = self.nb) #samples
+        else:
+            self.gate_count = 0
+            if self.nb == 0:
+                return np.copy(self.initial_state)
+            
+            if "time" in self.exp_op_cache:
+                if (self.exp_op_cache["time"] != time) or (self.exp_op_cache["samples"] != self.nb): #samples
+                    self.exp_op_cache.clear()
+                    # WARNING: potential could allow for "time creep", by adjusting time 
+                    # in multiple instances of FLOATING POINT PRECISION it could slowly
+                    # drift from the time that the exponential operators used
+
+            if (len(self.hamiltonian_list) == 0): # or (len(self.hamiltonian_list) == 1) caused issues in comp sim
+                return np.copy(self.initial_state) #make the choice not to sample a lone qdrift term
+
+            tau = time * np.sum(self.spectral_norms) / (self.nb * 1.0) #samples
+            self.exp_op_cache["time"] = time
+            self.exp_op_cache["samples"] = self.nb #samples
+            obtained_samples = self.draw_hamiltonian_samples(self.nb) #samples
+
+            op_list = []
+            for ix in obtained_samples:
+                if ix not in self.exp_op_cache:
+                    self.exp_op_cache[ix] = linalg.expm(-1 * tau * self.hamiltonian_list[ix])
+                op_list.append(self.exp_op_cache[ix])
+
+            final_state = np.copy(self.initial_state)
+            if self.use_density_matrices:
+                channel_out = np.linalg.multi_dot(op_list + [self.initial_state] + op_list)
+                final_state =  channel_out / np.trace(channel_out)
+                if np.abs(np.abs(np.trace(final_state)) - np.abs(np.trace(self.initial_state))) > 1e-12:
+                    print("[Trotter_sim.simulate] Error: significant non-trace preserving operation was done.")
+
+            else:
+                evol_out = np.linalg.multi_dot(op_list + [self.initial_state])
+                final_state = evol_out / np.linalg.norm(evol_out, ord=2)  
+
+            self.final_state = final_state
+            self.gate_count = self.nb
+            return final_state
+
+    def construct_density(self, time, samples):
+        if self.use_density_matrices == False:
+            print("[QDSim.construct_density] You're trying to construct a density matrix with vector initial state. try again")
+            return np.copy(self.initial_state)
+        self.gate_count = 0
+        lamb = np.sum(self.spectral_norms)
+        tau = time * lamb / (samples * 1.0)
+        if "time" in self.exp_op_cache:
+            if (self.exp_op_cache["time"] != time) or (self.exp_op_cache["samples"] != samples): #incase partition changes
+                self.exp_op_cache.clear()
+
+        if (len(self.hamiltonian_list) == 0): # or (len(self.hamiltonian_list) == 1) caused issues in comp sim
+            return np.copy(self.initial_state) #make the choice not to sample a lone qdrift term
+        
+        if len(self.exp_op_cache) == 0:
+            self.exp_op_cache["time"] = time
+            self.exp_op_cache["samples"] = samples
+            for k in range(len(self.spectral_norms)):
+                self.exp_op_cache[k] =linalg.expm(-1 * tau * self.hamiltonian_list[k])
+
+        rho = np.copy(self.initial_state)
+        for i in range(samples):
+            channel_output = np.zeros((self.hamiltonian_list[0].shape[0], self.hamiltonian_list[0].shape[0]), dtype = 'complex')
+            for j in range(len(self.spectral_norms)):
+                channel_output += (self.spectral_norms[j]/lamb) * self.exp_op_cache.get(j) @ rho @ self.exp_op_cache.get(j) #an error is creeping in here (I think for the case len(b) = 1)
+            rho = channel_output / np.trace(channel_output)
+
+        self.final_state = rho
+        self.gate_count = samples
+        return np.copy(self.final_state)
+
 
 if __name__ == "__main__":
     from utils import graph_hamiltonian
