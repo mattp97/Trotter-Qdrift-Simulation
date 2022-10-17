@@ -1,7 +1,6 @@
 import numpy as np
 from scipy import linalg
 import multiprocessing as mp
-# import time as time_this
 import cProfile, pstats, io
 from itertools import repeat
 from copy import deepcopy
@@ -213,9 +212,12 @@ class TrotterSim:
             if np.abs(np.abs(np.trace(final_state)) - np.abs(np.trace(self.initial_state))) > 1e-12:
                 print("[Trotter_sim.simulate] Error: significant non-trace preserving operation was done.")
         else:
-            final_state = np.linalg.matrix_power(scrunch_op, iterations) @ self.initial_state
-        
-        # TODO: This only uses the gates used for one side if we use density matrix, is this reasonable?
+            if self.imag_time == False:
+                final_state = np.linalg.matrix_power(scrunch_op, iterations) @ self.initial_state
+            else:
+                imag_out = np.linalg.matrix_power(scrunch_op, iterations) @ self.initial_state
+                final_state = imag_out / np.linalg.norm(imag_out, ord=2)
+
         self.gate_count = len(matrix_mul_list) * iterations
 
         return final_state        
@@ -376,8 +378,12 @@ class QDriftSim:
                 if np.abs(np.abs(np.trace(final_state)) - np.abs(np.trace(self.initial_state))) > 1e-12:
                     print("[Trotter_sim.simulate] Error: significant non-trace preserving operation was done.")
 
-            else:
-                final_state = np.linalg.multi_dot(op_list + [self.initial_state])
+            else: 
+                if self.imag_time == False:
+                    final_state = np.linalg.multi_dot(op_list + [self.initial_state])
+                else: 
+                    imag_out = np.linalg.multi_dot(op_list + [self.initial_state])
+                    final_state = imag_out / np.linalg.norm(imag_out, ord=2)
 
             self.final_state = final_state
             self.gate_count = samples
@@ -431,9 +437,11 @@ class QDriftSim:
                 channel_output = np.zeros((self.hamiltonian_list[0].shape[0], self.hamiltonian_list[0].shape[0]), dtype = 'complex')
                 for j in range(len(self.spectral_norms)):
                     channel_output += (self.spectral_norms[j]/lamb) * self.exp_op_cache.get(j) @ rho @ self.exp_op_cache.get(j) #an error is creeping in here (I think for the case len(b) = 1)
-                rho = channel_output / np.trace(channel_output)
-
-        self.final_state = rho
+                rho = channel_output #/ np.trace(channel_output)
+        if self.imag_time==False:
+            self.final_state = rho
+        else: 
+            self.final_state = rho / np.trace(rho)
         self.gate_count = samples
         return np.copy(self.final_state)
 
@@ -654,6 +662,11 @@ class CompositeSim:
         # return nested simulator initial states to normal
         self.trotter_sim.set_initial_state(self.initial_state)
         self.qdrift_sim.set_initial_state(self.initial_state)
+
+        if self.imag_time == True and self.use_density_matrices == True:
+            if np.abs(np.trace(current_state) - 1) > FLOATING_POINT_PRECISION:
+                raise Exception("A non-trace preserving operation was excecuted")
+
         return current_state
 
     def to_multiprocessing_dictionary(self, time, iterations):
