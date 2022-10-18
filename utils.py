@@ -1076,7 +1076,7 @@ def normalize_hamiltonian(hamiltonian_list):
 # Imaginary time evolution -- this sectiuon is used for tools to help with imaginary time QDrift for Monte-Carlo
 def exact_imaginary_channel(hamiltonian_list, i_time, initial_rho):
     evol_op = linalg.expm(-1 * i_time * sum(hamiltonian_list))
-    ret = evol_op * initial_rho * evol_op
+    ret = evol_op @ initial_rho @ evol_op
     return ret / np.trace(ret)
 
 # Debugging purposes

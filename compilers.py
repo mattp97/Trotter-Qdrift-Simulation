@@ -437,10 +437,11 @@ class QDriftSim:
                 channel_output = np.zeros((self.hamiltonian_list[0].shape[0], self.hamiltonian_list[0].shape[0]), dtype = 'complex')
                 for j in range(len(self.spectral_norms)):
                     channel_output += (self.spectral_norms[j]/lamb) * self.exp_op_cache.get(j) @ rho @ self.exp_op_cache.get(j) #an error is creeping in here (I think for the case len(b) = 1)
-                rho = channel_output #/ np.trace(channel_output)
+                rho = channel_output / np.trace(channel_output)
         if self.imag_time==False:
             self.final_state = rho
         else: 
+            print("normalized by " + str(np.trace(rho)))
             self.final_state = rho / np.trace(rho)
         self.gate_count = samples
         return np.copy(self.final_state)
