@@ -441,7 +441,7 @@ class QDriftSim:
         if self.imag_time==False:
             self.final_state = rho
         else: 
-            print("normalized by " + str(np.trace(rho)))
+            #print("normalized by " + str(np.trace(rho)))
             self.final_state = rho / np.trace(rho)
         self.gate_count = samples
         return np.copy(self.final_state)
@@ -665,7 +665,7 @@ class CompositeSim:
         self.qdrift_sim.set_initial_state(self.initial_state)
 
         if self.imag_time == True and self.use_density_matrices == True:
-            if np.abs(np.trace(current_state) - 1) > FLOATING_POINT_PRECISION:
+            if np.abs(np.abs(np.trace(current_state)) - 1) > FLOATING_POINT_PRECISION:
                 raise Exception("A non-trace preserving operation was excecuted")
 
         return current_state
