@@ -34,8 +34,9 @@ def conditional_decorator(dec, condition):
     return decorator
 
 #A function to generate a random initial state that is normalized MP-- sampled from gauss to avoid measure concentration
-def initial_state_randomizer(hilbert_dim): #changed to sample each dimension from a gaussain
+def initial_state_randomizer(hilbert_dim, rng_seed): #changed to sample each dimension from a gaussain
      initial_state = []
+     np.random.seed(rng_seed)
      x = np.random.normal(size=(hilbert_dim, 1))
      y = np.random.normal(size=(hilbert_dim, 1))
      initial_state = x + (1j * y) 
@@ -505,7 +506,7 @@ class CompositeSim:
         #Should probably add functionality to take an initial state as input at some point
         if self.hilbert_dim > 0:
             if self.state_rand == True:
-                self.initial_state = initial_state_randomizer(self.hilbert_dim)
+                self.initial_state = initial_state_randomizer(self.hilbert_dim, rng_seed=self.rng_seed)
             else:
                 # Use the first computational basis state as the initial state until the user specifies.
                 self.initial_state = np.zeros((self.hilbert_dim, 1))
@@ -815,7 +816,7 @@ class LRsim:
         #Choose to randomize the initial state or just use computational |0>
         #Should probably add functionality to take an initial state as input at some point
         if self.state_rand == True:
-            self.initial_state = initial_state_randomizer(self.hilbert_dim)
+            self.initial_state = initial_state_randomizer(self.hilbert_dim, self.rng_seed)
         else:
             # Use the first computational basis state as the initial state until the user specifies.
             self.initial_state = np.zeros((self.hilbert_dim, 1))

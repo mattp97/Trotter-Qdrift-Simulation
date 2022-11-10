@@ -648,7 +648,7 @@ def partition_sim_optimal_chop(simulator, time, epsilon):
 
 def exact_optimal_chop(simulator, time, epsilon):
     if type(simulator) != CompositeSim: raise TypeError("this partition only makes sense for simulators of the class CompositeSim")
-    dim1 = Integer(name = "nb", low=1, high = len(simulator.spectral_norms))
+    dim1 = Integer(name = "nb", low=1, high = int(1/2 * len(simulator.spectral_norms)))
     dim2 = Real(name = "w", low=min(simulator.spectral_norms), high = max(simulator.spectral_norms) + min(simulator.spectral_norms)/10)
     guess_point = [int((1/4)*len(simulator.spectral_norms)), statistics.median(simulator.spectral_norms)]
     dimensions = [dim1, dim2]
@@ -659,7 +659,7 @@ def exact_optimal_chop(simulator, time, epsilon):
         partition_sim(simulator, "chop", chop_threshold=w)
         return exact_cost(simulator, time, nb, epsilon)
     
-    result = gbrt_minimize(func=obj_func,dimensions=dimensions, n_calls=25, n_initial_points = 5, 
+    result = gbrt_minimize(func=obj_func,dimensions=dimensions, n_calls=20, n_initial_points = 10, 
                 random_state=4, verbose = False, acq_func = "LCB", x0 = guess_point, n_jobs=-1)
 
     simulator.gate_count = result.fun
