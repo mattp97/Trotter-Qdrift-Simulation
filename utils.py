@@ -659,7 +659,7 @@ def exact_optimal_chop(simulator, time, epsilon):
         partition_sim(simulator, "chop", chop_threshold=w)
         return exact_cost(simulator, time, nb, epsilon)
     
-    result = gbrt_minimize(func=obj_func,dimensions=dimensions, n_calls=20, n_initial_points = 10, 
+    result = gbrt_minimize(func=obj_func,dimensions=dimensions, n_calls=30, n_initial_points = 10, 
                 random_state=4, verbose = False, acq_func = "LCB", x0 = guess_point, n_jobs=-1)
 
     simulator.gate_count = result.fun
@@ -933,7 +933,7 @@ def optimal_local_chop(simulator, time, epsilon): ### needs exact cost function 
         return exact_cost(simulator, time, nb_list, epsilon)
     
     result = gbrt_minimize(func=obj_func,dimensions=dimensions, n_calls=40, n_initial_points = 5, 
-                random_state=4, verbose = False, acq_func = "LCB", x0 = guess_points, n_jobs=-1)
+                random_state=4, verbose = False, acq_func = "LCB", x0 = guess_points, n_jobs=1)
     simulator.gate_count = result.fun
     print("(nba, nby, nbb, wa, wy, wb): " +str(result.x))
     return 0
@@ -997,7 +997,7 @@ def exact_cost(simulator, time, nb, epsilon): #relies on the use of density matr
         else:
             lower_bound = mid + 1
     if break_flag_2 == False:
-        print("[sim_channel_performance] function did not find a good point")
+        raise Exception("[sim_channel_performance] function did not find a good point")
 
     get_trace_dist(mid)
     return simulator.gate_count
@@ -1023,39 +1023,6 @@ def sim_trace_distance(simulator, time, iterations, nb = None):
     else: raise Exception("only defined for CompSim and LRsim")
     #the nb handeling here is a bit redundant when we look at the fact that it is first handeled in the objective function of
     #local optimal chop
- 
-#a function that generates the list of hamiltonian terms for a random NN Heinsenberg model with abritrary b_field strength
-def heisenberg_hamiltonian(length, b_field, rng_seed):
-    y_dim = 1
-    x_dim = length #restrict to 1d spin change so we can get more disjoint regions
-    np.random.seed(rng_seed)
-    hamiltonian_list = []
-    indices = []
-    #graph = initialize_graph(x_dim, y_dim)
-    # operator_set = [X, Y, Z]
-    operator_set = []
-    operator_set.append(np.array([[0., 1.], [1., 0.]]))
-    operator_set.append(np.array([[0., -1.j],[1.j, 0.]]))
-    operator_set.append(np.array([[1., 0.],[0., -1.]]))
-    lat_points = x_dim*y_dim
-    for k in operator_set:
-        for i in range(lat_points):
-            for j in range (lat_points):
-                if (i == j+1):
-                    alpha = np.random.normal()
-                    hamiltonian_list.append(2**alpha * np.matmul(initialize_operator(k, i, lat_points), initialize_operator(k, j, lat_points)))
-                    indices.append([i, j])
-
-                #if ((i==0) and (j==lat_points-1)): #periodic BC (we dont want this as we want to limit connectivity) 
-                    #alpha = np.random.normal()
-                    #hamiltonian_list.append(10**alpha * np.matmul(initialize_operator(k, i, lat_points), initialize_operator(k, j, lat_points)))
-
-            if np.array_equal(operator_set[-1], k) == True:
-                #beta = np.random.normal() if we want to randomize the field strength reponse at each site (might be unphysical)
-                hamiltonian_list.append(b_field * initialize_operator(k, i, lat_points))
-                indices.append([i])
-
-    return (np.array(hamiltonian_list) , indices, length)
 
 def set_local_nb(simulator, nb_list): #is chop using this 
     if type(simulator) != LRsim: raise TypeError("only works on LRsims")
@@ -1080,15 +1047,15 @@ def exact_imaginary_channel(hamiltonian_list, i_time, initial_rho):
     return ret / np.trace(ret)
 
 # Debugging purposes
-if __name__ == "__main__":
-    print("[utils.main]")
-    local_nb = [2, 2, 2]
-    heisenberg_hamiltonian_list = heisenberg_hamiltonian(8, 0.5, rng_seed=1)
-    print(heisenberg_hamiltonian_list[0].shape)
-    local_hamiltonian = hamiltonian_localizer_1d(heisenberg_hamiltonian_list, sub_block_size=2)
-    lrsim = LRsim(heisenberg_hamiltonian_list[0], local_hamiltonian, inner_order = 1, nb = local_nb, state_rand = False)
-    local_partition(lrsim, partition = "trotter", time= 0.01, epsilon = 0.01)
-    print("trace distances:")
-    for iter in range(1, 10):
-        print(sim_trace_distance(lrsim, 1e-5, iter, nb=[5, 5, 5]))
-        print('gate count per iter:', lrsim.gate_count / 51)
+# if __name__ == "__main__":
+#     print("[utils.main]")
+#     local_nb = [2, 2, 2]
+#     heisenberg_hamiltonian_list = heisenberg_hamiltonian(8, 0.5, rng_seed=1)
+#     print(heisenberg_hamiltonian_list[0].shape)
+#     local_hamiltonian = hamiltonian_localizer_1d(heisenberg_hamiltonian_list, sub_block_size=2)
+#     lrsim = LRsim(heisenberg_hamiltonian_list[0], local_hamiltonian, inner_order = 1, nb = local_nb, state_rand = False)
+#     local_partition(lrsim, partition = "trotter", time= 0.01, epsilon = 0.01)
+#     print("trace distances:")
+#     for iter in range(1, 10):
+#         print(sim_trace_distance(lrsim, 1e-5, iter, nb=[5, 5, 5]))
+#         print('gate count per iter:', lrsim.gate_count / 51)

@@ -179,12 +179,16 @@ class TrotterSim:
             return np.copy(self.initial_state)
 
         if "time" in self.exp_op_cache:
-            if (self.exp_op_cache["time"] != time) or (self.exp_op_cache["iterations"] != iterations):
+            if (self.exp_op_cache["time"] != time) or (self.exp_op_cache["iterations"] != iterations) or (self.exp_op_cache["imaginary"] 
+                    != self.imag_time) or (self.exp_op_cache["num_terms"] != self.spectral_norms):
                 self.exp_op_cache.clear()
         
         if len(self.exp_op_cache) == 0:
+            imag_flag = self.imag_time
             self.exp_op_cache["time"] = time
             self.exp_op_cache["iterations"] = iterations
+            self.exp_op_cache["imaginary"] = imag_flag
+            self.exp_op_cache["num_terms"] = len(self.spectral_norms)
 
         op_time = time/iterations
         steps = compute_trotter_timesteps(len(self.hamiltonian_list), op_time, self.order)
@@ -340,7 +344,7 @@ class QDriftSim:
                 return np.copy(self.initial_state)
             
             if "time" in self.exp_op_cache:
-                if (self.exp_op_cache["time"] != time) or (self.exp_op_cache["samples"] != samples):
+                if (self.exp_op_cache["time"] != time) or (self.exp_op_cache["samples"] != samples) or self.exp_op_cache["imaginary"] != self.imag_time:
                     self.exp_op_cache.clear()
                     # WARNING: potential could allow for "time creep", by adjusting time 
                     # in multiple instances of FLOATING POINT PRECISION it could slowly
@@ -350,8 +354,10 @@ class QDriftSim:
                 return np.copy(self.initial_state) #make the choice not to sample a lone qdrift term
 
             tau = time * np.sum(self.spectral_norms) / (samples * 1.0)
+            imag_flag = self.imag_time
             self.exp_op_cache["time"] = time
             self.exp_op_cache["samples"] = samples
+            self.exp_op_cache["imaginary"] = imag_flag
             obtained_samples = self.draw_hamiltonian_samples(samples)
 
             op_list = []
@@ -408,7 +414,8 @@ class QDriftSim:
         lamb = np.sum(self.spectral_norms)
         tau = time * lamb / (samples * 1.0)
         if "time" in self.exp_op_cache:
-            if (self.exp_op_cache["time"] != time) or (self.exp_op_cache["samples"] != samples) or (len(self.conj_cache) != len(self.spectral_norms)): #incase partition changes
+            if (self.exp_op_cache["time"] != time) or (self.exp_op_cache["samples"] != samples) or (self.exp_op_cache["num_terms"] 
+                    != len(self.spectral_norms)) or (self.exp_op_cache["imaginary"] != self.imag_time): #incase partition changes
                 self.exp_op_cache.clear()
                 self.conj_cache.clear() #based on code will follow the conditions above
 
@@ -416,8 +423,11 @@ class QDriftSim:
             return np.copy(self.initial_state) #make the choice not to sample a lone qdrift term
         
         if len(self.exp_op_cache) == 0:
+            imag_flag = self.imag_time
             self.exp_op_cache["time"] = time
             self.exp_op_cache["samples"] = samples
+            self.exp_op_cache["imaginary"] = imag_flag
+            self.exp_op_cache["num_terms"] = len(self.spectral_norms)
             for k in range(len(self.spectral_norms)):
                 if self.imag_time == False: #only need if time is real
                     self.exp_op_cache[k] = linalg.expm(1.j * tau * self.hamiltonian_list[k])
@@ -444,6 +454,7 @@ class QDriftSim:
         else: 
             #print("normalized by " + str(np.trace(rho)))
             self.final_state = rho / np.trace(rho)
+            #clean up 
         self.gate_count = samples
         return np.copy(self.final_state)
 
