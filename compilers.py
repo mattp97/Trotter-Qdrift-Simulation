@@ -247,6 +247,9 @@ class QDriftSim:
         self.gate_count = 0
         self.exp_op_cache = dict()
         self.conj_cache = dict()
+        self.param_cache = dict()
+        self.product_form = []
+        self.product_form_conj = [] #to be lists of exponentiated operators (will be converted to numpy arrays for easier handeling)
         self.exact_qd=exact_qd #adding this to choose to build E[]
         self.imag_time = imag_time
 
@@ -458,6 +461,59 @@ class QDriftSim:
         self.gate_count = samples
         return np.copy(self.final_state)
 
+    def vec_construct_density(self, time, samples):
+        if self.use_density_matrices == False:
+            print("[QDSim.construct_density] You're trying to construct a density matrix with vector initial state. try again")
+            return np.copy(self.initial_state)
+        self.gate_count = 0
+        lamb = np.sum(self.spectral_norms)
+        tau = time * lamb / (samples * 1.0)
+        if "time" in self.param_cache:
+            if (self.param_cache["time"] != time) or (self.param_cache["samples"] != samples) or (self.param_cache["num_terms"] 
+                    != len(self.spectral_norms)) or (self.param_cache["imaginary"] != self.imag_time): #incase partition changes
+                self.param_cache.clear()
+                self.product_form = []
+                self.product_form_conj = [] #based on code will follow the conditions above
+
+        if (len(self.hamiltonian_list) == 0): # or (len(self.hamiltonian_list) == 1) caused issues in comp sim
+            return np.copy(self.initial_state) #make the choice not to sample a lone qdrift term
+        
+        if len(self.param_cache) == 0:
+            imag_flag = self.imag_time
+            self.param_cache["time"] = time
+            self.param_cache["samples"] = samples
+            self.param_cache["imaginary"] = imag_flag
+            self.param_cache["num_terms"] = len(self.spectral_norms)
+            for k in range(len(self.spectral_norms)):
+                if self.imag_time == False: #only need if time is real
+                    self.product_form.append(linalg.expm(1.j * tau * self.hamiltonian_list[k]))  
+                    self.product_form_conj.append(self.product_form[k].conj().T) 
+                else:
+                    self.product_form.append(linalg.expm(-1 * tau * self.hamiltonian_list[k])) 
+                    self.product_form.append(self.product_form)
+
+            self.product_form = np.array(self.product_form)
+            self.product_form_conj = np.array(self.product_form_conj)
+        
+        rho = np.copy(self.initial_state)
+        prob_vec = np.array(self.spectral_norms/lamb) #if we switch to pyton arrays instead of dictionaries for storing operators, these steps would be unnecessary.
+
+        if self.imag_time == False:
+            for _ in range(samples):
+                rho = np.sum((prob_vec * self.product_form.T).T @ rho @ self.product_form_conj, 0)
+            
+        else:
+            for _ in range(samples):
+                rho = np.sum((prob_vec * self.product_form.T).T @ rho @ self.product_form, 0)
+                
+        if self.imag_time==False:
+            self.final_state = rho
+        else: 
+            #print("normalized by " + str(np.trace(rho)))
+            self.final_state = rho / np.trace(rho)
+            #clean up 
+        self.gate_count = samples
+        return np.copy(self.final_state)
 
 ###############################################################################################################################################################
 class CompositeSim:
