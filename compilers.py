@@ -409,59 +409,8 @@ class QDriftSim:
             #     evol_out = np.linalg.multi_dot(op_list + [self.initial_state])
             #     final_state = evol_out / np.linalg.norm(evol_out, ord=2)
 
+
     def construct_density(self, time, samples):
-        if self.use_density_matrices == False:
-            print("[QDSim.construct_density] You're trying to construct a density matrix with vector initial state. try again")
-            return np.copy(self.initial_state)
-        self.gate_count = 0
-        lamb = np.sum(self.spectral_norms)
-        tau = time * lamb / (samples * 1.0)
-        if "time" in self.exp_op_cache:
-            if (self.exp_op_cache["time"] != time) or (self.exp_op_cache["samples"] != samples) or (self.exp_op_cache["num_terms"] 
-                    != len(self.spectral_norms)) or (self.exp_op_cache["imaginary"] != self.imag_time): #incase partition changes
-                self.exp_op_cache.clear()
-                self.conj_cache.clear() #based on code will follow the conditions above
-
-        if (len(self.hamiltonian_list) == 0): # or (len(self.hamiltonian_list) == 1) caused issues in comp sim
-            return np.copy(self.initial_state) #make the choice not to sample a lone qdrift term
-        
-        if len(self.exp_op_cache) == 0:
-            imag_flag = self.imag_time
-            self.exp_op_cache["time"] = time
-            self.exp_op_cache["samples"] = samples
-            self.exp_op_cache["imaginary"] = imag_flag
-            self.exp_op_cache["num_terms"] = len(self.spectral_norms)
-            for k in range(len(self.spectral_norms)):
-                if self.imag_time == False: #only need if time is real
-                    self.exp_op_cache[k] = linalg.expm(1.j * tau * self.hamiltonian_list[k])
-                    self.conj_cache[k] = self.exp_op_cache.get(k).conj().T
-                else:
-                    self.exp_op_cache[k] = linalg.expm(-1 * tau * self.hamiltonian_list[k])
-
-        rho = np.copy(self.initial_state)
-        if self.imag_time == False:
-            for i in range(samples):
-                channel_output = np.zeros((self.hamiltonian_list[0].shape[0], self.hamiltonian_list[0].shape[0]), dtype = 'complex')
-                for j in range(len(self.spectral_norms)):
-                    channel_output += (self.spectral_norms[j]/lamb) * self.exp_op_cache.get(j) @ rho @ self.conj_cache.get(j) #an error is creeping in here (I think for the case len(b) = 1)
-                rho = channel_output
-            
-        else:
-            for i in range(samples):
-                channel_output = np.zeros((self.hamiltonian_list[0].shape[0], self.hamiltonian_list[0].shape[0]), dtype = 'complex')
-                for j in range(len(self.spectral_norms)):
-                    channel_output += (self.spectral_norms[j]/lamb) * self.exp_op_cache.get(j) @ rho @ self.exp_op_cache.get(j) #an error is creeping in here (I think for the case len(b) = 1)
-                rho = channel_output / np.trace(channel_output)
-        if self.imag_time==False:
-            self.final_state = rho
-        else: 
-            #print("normalized by " + str(np.trace(rho)))
-            self.final_state = rho / np.trace(rho)
-            #clean up 
-        self.gate_count = samples
-        return np.copy(self.final_state)
-
-    def vec_construct_density(self, time, samples):
         if self.use_density_matrices == False:
             print("[QDSim.construct_density] You're trying to construct a density matrix with vector initial state. try again")
             return np.copy(self.initial_state)
@@ -496,15 +445,16 @@ class QDriftSim:
             self.product_form_conj = np.array(self.product_form_conj)
         
         rho = np.copy(self.initial_state)
-        prob_vec = np.array(self.spectral_norms/lamb) #if we switch to pyton arrays instead of dictionaries for storing operators, these steps would be unnecessary.
+        prob_vec = np.array(self.spectral_norms/lamb) 
+        broad_prod_form = (prob_vec * self.product_form.T).T #a product form with respective probabilities broadcasted
 
         if self.imag_time == False:
             for _ in range(samples):
-                rho = np.sum((prob_vec * self.product_form.T).T @ rho @ self.product_form_conj, 0)
+                rho = np.sum(broad_prod_form @ rho @ self.product_form_conj, 0)
             
         else:
             for _ in range(samples):
-                rho = np.sum((prob_vec * self.product_form.T).T @ rho @ self.product_form, 0)
+                rho = np.sum(broad_prod_form @ rho @ self.product_form, 0)
                 
         if self.imag_time==False:
             self.final_state = rho

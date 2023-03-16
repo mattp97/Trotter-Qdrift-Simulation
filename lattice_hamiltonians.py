@@ -114,3 +114,51 @@ def heisenberg_hamiltonian(length, b_field, rng_seed, b_rand):
                     indices.append([i])
 
     return np.array(hamiltonian_list, indices, length)
+
+
+def exp_distr_heisenberg_hamiltonian(length, b_field, rng_seed, b_rand):
+    #b_rand is a boolean that either sets the field to be randomized or the interactions (if false)
+    y_dim = 1
+    x_dim = length #restrict to 1d spin change so we can get more disjoint regions
+    np.random.seed(rng_seed)
+    hamiltonian_list = []
+    indices = []
+    #graph = initialize_graph(x_dim, y_dim)
+    operator_set = [X, Y, Z]
+    lat_points = x_dim*y_dim
+    for k in operator_set:
+        for i in range(lat_points):
+            for j in range (lat_points):
+                if (i == j+1):
+                    if b_rand == True:
+                        hamiltonian_list.append(1 * np.matmul(initialize_operator(k, i, lat_points), initialize_operator(k, j, lat_points)))
+                        #indices.append([i, j])
+                    else:
+                        alpha = np.random.exponential(scale=0.1)
+                        hamiltonian_list.append(alpha * np.matmul(initialize_operator(k, i, lat_points), initialize_operator(k, j, lat_points)))
+                        #indices.append([i, j])
+
+            if np.array_equal(Z, k) == True:
+                if b_rand == True:
+                    beta = np.random.exponential() #if we want to randomize the field strength reponse at each site (might be unphysical)
+                    hamiltonian_list.append(beta * initialize_operator(k, i, lat_points))
+                    #indices.append([i])
+                else: 
+                    hamiltonian_list.append(b_field * initialize_operator(k, i, lat_points))
+                    #indices.append([i])
+
+    return np.array(hamiltonian_list)
+
+
+def ising_model(dim, b_field = 0, rng_seed=1):
+    '''Function does not currently have randomization effects, b_field picks the J/g ratio, where J==1'''
+    ham_list = []
+    for i in range(dim):
+        for j in range(dim):
+            if ((i==j+1) or (i==0 and j == dim-1)):
+                ham_list.append(-1 * np.matmul(initialize_operator(Z, i, dim), initialize_operator(Z, j, dim)))
+            
+        if b_field != 0:
+            ham_list.append(b_field * initialize_operator(X, i, dim))
+
+    return np.array(ham_list)

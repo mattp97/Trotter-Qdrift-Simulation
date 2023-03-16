@@ -178,11 +178,19 @@ def multi_trace_distance_sample(simulator, time, exact_final_state, iterations=1
         ret = (dist, simulator.gate_count)
     return ret
 
-def exact_time_evolution(hamiltonian_list, time, initial_state):
-    if len(hamiltonian_list) == 0:
-        print("[exact_time_evolution] pls give me hamiltonian")
-        return 1
-    return linalg.expm(1j * sum(hamiltonian_list) * time) @ initial_state
+def exact_time_evolution(sim, time): #framework did not accept a simulator previously, this may break something somewhere in the state_vec sampling pic
+    if sim.use_density_matrices == True:
+        if sim.imag_time == False:
+            return linalg.expm(1j * sum(sim.unparsed_hamiltonian) * time) @ sim.initial_state @ linalg.expm(1j * sum(sim.unparsed_hamiltonian) * time).conj().T
+        else:
+            un_normed_state = linalg.expm(-1 * sum(sim.unparsed_hamiltonian) * time) @ sim.initial_state @ linalg.expm(-1 * sum(sim.unparsed_hamiltonian) * time)
+            return un_normed_state / np.trace(un_normed_state)
+    else:
+        if sim.imag_time == False:
+            return linalg.expm(1j * sum(sim.unparsed_hamiltonian) * time) @ sim.initial_state
+        else:
+            un_normed_state = linalg.expm(-1 * sum(sim.unparsed_hamiltonian) * time) @ sim.initial_state
+            return un_normed_state / np.linalg.norm(un_normed_state)
 
 
 def get_iteration_bounds(is_iteration_good, heuristic, verbose=False):
