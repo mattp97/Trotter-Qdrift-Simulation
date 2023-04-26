@@ -496,7 +496,7 @@ def expected_cost(simulator, partition_probs, time, infidelity_threshold, heuris
 # - nb_scaling: a parametrization of nb within it's lower bound. Follows the scaling (1 + c)^2 * lower_bound. see paper for lower_bound
 # - time: required for probabilistic
 # - epsilon: required for probabilistic
-def partition_sim(simulator, partition_type = "prob", chop_threshold = 0.5, optimize = False, nb_scaling = 0.0, time=0.01, epsilon=0.05):
+def partition_sim(simulator, partition_type = "prob", chop_threshold = 0.5, optimize = False, nb_scaling = 0.0, time=0.01, epsilon=0.05, q_tile = 85):
     if type(partition_type) != type("string"):
         print("[partition_sim] We only accept strings to describe the partition_type")
         return 1
@@ -524,7 +524,7 @@ def partition_sim(simulator, partition_type = "prob", chop_threshold = 0.5, opti
         simulator.partition_type = "optimal_chop"
 
     elif partition_type=="exact_optimal_chop":
-        exact_optimal_chop(simulator, time, epsilon)
+        exact_optimal_chop(simulator, time, epsilon, q_tile)
         simulator.partition_type = "exact_optimal_chop"
 
     elif partition_type == "trotter":
@@ -654,11 +654,18 @@ def partition_sim_optimal_chop(simulator, time, epsilon):
     print("result.x: ", result.x)
     print("result:", result)
 
-def exact_optimal_chop(simulator, time, epsilon):
+def exact_optimal_chop(simulator, time, epsilon, q_tile): #q_tile computes the quartile of the norms and tries to prevent silly qdrift guesses 
+    #with long computation times (ie placing all terms in qdrift at a large time)
     if type(simulator) != CompositeSim: raise TypeError("this partition only makes sense for simulators of the class CompositeSim")
+    norm = np.linalg.norm(np.sum(simulator.unparsed_hamiltonian, axis=0), ord=2)
     dim1 = Integer(name = "nb", low=1, high = int(1/2 * len(simulator.spectral_norms)))
-    dim2 = Real(name = "w", low=min(simulator.spectral_norms), high = max(simulator.spectral_norms) + min(simulator.spectral_norms)/10)
-    guess_point = [int((1/4)*len(simulator.spectral_norms)), statistics.median(simulator.spectral_norms)]
+    if (time * norm > 1):
+        dim2 = Real(name = "w", low=min(simulator.spectral_norms), high = np.percentile(simulator.spectral_norms, q_tile))
+    else: 
+        dim2 = Real(name = "w", low=min(simulator.spectral_norms), high = max(simulator.spectral_norms) + min(simulator.spectral_norms)/10)
+    guess_point1 = [int((1/4)*len(simulator.spectral_norms)), statistics.median(simulator.spectral_norms)]
+    guess_point2 = [int((1/20)*len(simulator.spectral_norms)), statistics.median(simulator.spectral_norms)]
+    guess_points = [guess_point1, guess_point2]
     dimensions = [dim1, dim2]
 
     @use_named_args(dimensions=dimensions)
@@ -667,12 +674,12 @@ def exact_optimal_chop(simulator, time, epsilon):
         partition_sim(simulator, "chop", chop_threshold=w)
         return exact_cost(simulator, time, nb, epsilon)
     
-    result = gbrt_minimize(func=obj_func,dimensions=dimensions, n_calls=30, n_initial_points = 10, 
-                random_state=4, verbose = False, acq_func = "LCB", x0 = guess_point, n_jobs=1)
+    result = gbrt_minimize(func=obj_func,dimensions=dimensions, n_calls=50, n_initial_points = 20, 
+                random_state=4, verbose = False, acq_func = "LCB", x0 = guess_points, n_jobs=1)
 
     simulator.gate_count = result.fun
-    print("result.fun: ", result.fun)
-    print("result.x: ", result.x)
+    #print("result.fun: ", result.fun)
+    #print("result.x: ", result.x)
 
 # Let boosted regression trees try their best to come up with good probabilities
 # Inputs: self-explanatory
@@ -968,12 +975,11 @@ def exact_cost(simulator, time, nb, epsilon): #relies on the use of density matr
         else: 
             get_trace_dist = lambda x : sim_trace_distance(simulator=simulator, time=time, iterations=x, nb = simulator.nb)
     else: raise TypeError("only works on LR and Composite Sims")
-        
     lower_bound = 1
     upper_bound = 2
     trace_dist = get_trace_dist(lower_bound)
     if trace_dist < epsilon:
-        print("[sim_channel_performance] Iterations too large, already below error threshold")
+        #print("[sim_channel_performance] Iterations too large, already below error threshold")
         return simulator.gate_count
     # Iterate up until some max cutoff
     break_flag = False
