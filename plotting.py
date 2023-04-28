@@ -43,7 +43,7 @@ def ham_spec(hamiltonian_list):
             zero_norms += 1
     norms.sort()
     plt.figure(figsize=(9,7))
-    plt.plot(index, norms, 'o-')
+    plt.semilogy(index, norms, 'o-')
     plt.xlabel("Index", size = 18)
     plt.ylabel("Spectral Norm", size = 18)
     plt.show()

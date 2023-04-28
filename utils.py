@@ -668,7 +668,7 @@ def exact_optimal_chop(simulator, time, epsilon):
         return exact_cost(simulator, time, nb, epsilon)
     
     result = gbrt_minimize(func=obj_func,dimensions=dimensions, n_calls=30, n_initial_points = 10, 
-                random_state=4, verbose = False, acq_func = "LCB", x0 = guess_point, n_jobs=-1)
+                random_state=4, verbose = False, acq_func = "LCB", x0 = guess_point, n_jobs=1)
 
     simulator.gate_count = result.fun
     print("result.fun: ", result.fun)
