@@ -1,6 +1,5 @@
 import numpy as np
 
-
 # This code includes functions to generate lattice hamiltonians of arbitrary size with desired connectivity
 # and other properties
 
@@ -82,7 +81,7 @@ def exp_loc_graph_hamiltonian(x_dim, y_dim, rng_seed):
 
 #a function that generates the list of hamiltonian terms for a random NN Heinsenberg model with abritrary b_field strength
 # different from the other funciton as this one just returns a hamiltonian (no tracking of indices like in the other .ipynb)
-def heisenberg_hamiltonian(length, b_field, rng_seed, b_rand):
+def local_heisenberg_hamiltonian(length, b_field, rng_seed, b_rand):
     #b_rand is a boolean that either sets the field to be randomized or the interactions (if false)
     y_dim = 1
     x_dim = length #restrict to 1d spin change so we can get more disjoint regions
