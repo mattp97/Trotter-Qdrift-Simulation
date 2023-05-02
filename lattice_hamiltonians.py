@@ -177,8 +177,10 @@ def local_heisenberg_hamiltonian(length, b_field, rng_seed, b_rand):
                         hamiltonian_list.append(1 * np.matmul(initialize_operator(k, i, lat_points), initialize_operator(k, j, lat_points)))
                         indices.append([i, j])
                     else:
-                        alpha = np.random.normal()
-                        hamiltonian_list.append(2**alpha * np.matmul(initialize_operator(k, i, lat_points), initialize_operator(k, j, lat_points)))
+                        alpha = np.random.exponential(scale=0.05)
+                        hamiltonian_list.append(alpha * np.matmul(initialize_operator(k, i, lat_points), initialize_operator(k, j, lat_points))) 
+                        #alpha = np.random.normal()
+                        #hamiltonian_list.append(2**alpha * np.matmul(initialize_operator(k, i, lat_points), initialize_operator(k, j, lat_points)))
                         indices.append([i, j])
 
             if np.array_equal(Z, k) == True:

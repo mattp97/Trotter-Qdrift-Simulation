@@ -438,11 +438,10 @@ class QDriftSim:
                     self.product_form.append(linalg.expm(1.j * tau * self.hamiltonian_list[k]))  
                     self.product_form_conj.append(self.product_form[k].conj().T) 
                 else:
-                    self.product_form.append(linalg.expm(-1 * tau * self.hamiltonian_list[k])) 
-                    self.product_form.append(self.product_form)
+                    self.product_form.append(linalg.expm(-1 * tau * self.hamiltonian_list[k])) #was double appending
 
             self.product_form = np.array(self.product_form)
-            self.product_form_conj = np.array(self.product_form_conj)
+            if self.imag_time==False: self.product_form_conj = np.array(self.product_form_conj)
         
         rho = np.copy(self.initial_state)
         prob_vec = np.array(self.spectral_norms/lamb) 
@@ -865,9 +864,9 @@ class LRsim:
         self.final_state = current_state
         return np.copy(self.final_state)
 
-if __name__ == "__main__":
-    from utils import graph_hamiltonian
-    ham = graph_hamiltonian(7,1,1)
-    sim = CompositeSim(hamiltonian_list=ham, use_density_matrices=True, verbose=True)
-    sim.randomize_initial_state()
-    sim.simulate_mc(1e-3, 2, mc_samples=8)
+# if __name__ == "__main__":
+#     from utils import graph_hamiltonian
+#     ham = graph_hamiltonian(7,1,1)
+#     sim = CompositeSim(hamiltonian_list=ham, use_density_matrices=True, verbose=True)
+#     sim.randomize_initial_state()
+#     sim.simulate_mc(1e-3, 2, mc_samples=8)

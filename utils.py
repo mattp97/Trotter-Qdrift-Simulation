@@ -857,9 +857,9 @@ def hamiltonian_localizer_1d(local_hamiltonian, sub_block_size):
         #     y_terms.append(1/h * terms[ix])
         #     y_index.append(indices[ix])
 
-    print(a_index)
-    print(y_index)
-    print(b_index)
+    #print(a_index)
+    #print(y_index)
+    #print(b_index)
     if ((len(a_terms) == 0) or (len(b_terms) == 0) or (len(y_terms) == 0)):
         raise Exception("poor block choice, one of the blocks is empty")
     return (np.array(a_terms), np.array(y_terms), np.array(b_terms)) #A and B here are really the AUB and BUC from the paper
@@ -915,8 +915,8 @@ def local_chop(simulator, weights):
             
         simulator.internal_sims[i].set_partition(a_temp, b_temp)
         
-        print("block " + str(i) + " has " + str(len(simulator.internal_sims[i].trotter_norms)) + 
-            " trotter terms and " + str(len(simulator.internal_sims[i].qdrift_norms)) + " qdrift terms")
+        #print("block " + str(i) + " has " + str(len(simulator.internal_sims[i].trotter_norms)) + 
+            #" trotter terms and " + str(len(simulator.internal_sims[i].qdrift_norms)) + " qdrift terms")
     simulator.partition_type = "local_chop"
     return 0
 

@@ -10,32 +10,33 @@ if __name__ == "__main__":
     cluster = False
     in_parallel = True
     optimized_run = True
-    job_name = 'jellium6_'
+    job_name = 'hydrogen3_'
     n_proc = 18
 
     #hamiltonian = heisenberg_hamiltonian(length = 8, b_field = 5, rng_seed=1, b_rand=False)
-    hamiltonian = jellium_hamiltonian(dimensions=1, length=6, spinless=True)
+    #hamiltonian = jellium_hamiltonian(dimensions=1, length=6, spinless=True)
+    hamiltonian = hydrogen_chain_hamiltonian(chain_length=3, bond_length=0.8)
     hamiltonian = normalize_hamiltonian(hamiltonian)
     norm = np.linalg.norm(np.sum(hamiltonian, axis=0), ord=2)
 
     compopt = CompositeSim(hamiltonian, inner_order=1, outer_order=1, nb=1, state_rand=True, exact_qd=True, use_density_matrices=True)
-    compheur11_20 = CompositeSim(hamiltonian, inner_order=1, outer_order=1, nb=20, state_rand=True, exact_qd=True, use_density_matrices=True)
+    compheur11_10 = CompositeSim(hamiltonian, inner_order=1, outer_order=1, nb=10, state_rand=True, exact_qd=True, use_density_matrices=True)
     #compheur123 = CompositeSim(hamiltonian, inner_order=1, outer_order=2, nb=3, state_rand=True, exact_qd=True, use_density_matrices=True)
     trotter1 = CompositeSim(hamiltonian, inner_order=1, outer_order=1, nb=1, state_rand=True, exact_qd=True, use_density_matrices=True)
     trotter2 = CompositeSim(hamiltonian, inner_order=2, outer_order=1, nb=1, state_rand=True, exact_qd=True, use_density_matrices=True)
     qdrift = CompositeSim(hamiltonian, inner_order=1, outer_order=1, nb=1, state_rand=True, exact_qd=True, use_density_matrices=True)
 
-    simulators = [compheur11_20, trotter1, trotter2, qdrift]
-    simulators_names = ['compheur11_20', 'trotter1', 'trotter2', 'qdrift'] #naming convention numbered is inner outer nb
+    simulators = [compheur11_10, trotter1, trotter2, qdrift]
+    simulators_names = ['compheur11_10', 'trotter1', 'trotter2', 'qdrift'] #naming convention numbered is inner outer nb
 
     opt_sims = [compopt]
     opt_sims_names = ['compopt']
     
-    t_i = (1/10) * 0.01 / norm
-    t_f= (1/10) * 3/2 * math.pi / norm
+    t_i = 0.01 / norm
+    t_f= 3/2 * math.pi / norm
     t_steps = 20
     times = list(np.geomspace(t_i, t_f, t_steps))
-    epsilon=0.00001
+    epsilon=0.0001
 
     data = {}
     data["time"] = times
@@ -46,7 +47,7 @@ if __name__ == "__main__":
     partition_sim(trotter2, "trotter")
     partition_sim(qdrift, "qdrift")
     #partition_sim(compheur113, "chop", chop_threshold = 0.75)
-    partition_sim(compheur11_20, "chop", chop_threshold = 0.0004)
+    partition_sim(compheur11_10, "chop", chop_threshold = 0.12)
 
     qd_stop = int((3/4) * len(times))
 
@@ -86,7 +87,7 @@ if __name__ == "__main__":
         if optimized_run == True:
             for j in range(len(opt_sims)):
                 def opt_cost_t(times):
-                    partition_sim(opt_sims[j], "exact_optimal_chop", time=times, epsilon=epsilon, q_tile=90)
+                    partition_sim(opt_sims[j], "exact_optimal_chop", time=times, epsilon=epsilon, q_tile=72)
                     print('at opt time ' + str(times))
                     return int(opt_sims[j].gate_count)
                 
@@ -99,7 +100,7 @@ if __name__ == "__main__":
     if cluster == False:
         filepath = os.path.join(os.path.expanduser('~'), 'Desktop', 'sim_runs', job_name + dt_string)
     else:
-        filepath = os.path.join(os.environ['SCRATCH'], job_name + dt_string)
+        filepath = os.path.join(os.path.expanduser('~'), 'compsim_data', job_name + dt_string)
     # open the file for writing and specify the file path
     with open(filepath, 'x') as f:
         # use json.dump to write the dictionary to the file
