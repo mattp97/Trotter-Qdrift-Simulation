@@ -654,7 +654,9 @@ def partition_sim_optimal_chop(simulator, time, epsilon):
     print("result.x: ", result.x)
     print("result:", result)
 
-def exact_optimal_chop(simulator, time, epsilon, q_tile): #q_tile computes the quartile of the norms and tries to prevent silly qdrift guesses 
+def exact_optimal_chop(simulator, time, epsilon, q_tile): 
+    '''an optimizer that uses GBRT to return a tuple containing the optimized gate count and its location like so: (gate count, [nb, w])'''
+    #q_tile computes the quartile of the norms and tries to prevent silly qdrift guesses 
     #with long computation times (ie placing all terms in qdrift at a large time)
     if type(simulator) != CompositeSim: raise TypeError("this partition only makes sense for simulators of the class CompositeSim")
     norm = np.linalg.norm(np.sum(simulator.unparsed_hamiltonian, axis=0), ord=2)
@@ -664,7 +666,7 @@ def exact_optimal_chop(simulator, time, epsilon, q_tile): #q_tile computes the q
     else: 
         dim2 = Real(name = "w", low=min(simulator.spectral_norms), high = max(simulator.spectral_norms) + min(simulator.spectral_norms)/10)
     guess_point1 = [int((1/4)*len(simulator.spectral_norms)), statistics.median(simulator.spectral_norms)]
-    guess_point2 = [int((1/20)*len(simulator.spectral_norms)), statistics.median(simulator.spectral_norms)]
+    guess_point2 = [max(int((1/20)*len(simulator.spectral_norms)), 1), statistics.median(simulator.spectral_norms)]
     guess_points = [guess_point1, guess_point2]
     dimensions = [dim1, dim2]
 
@@ -676,8 +678,12 @@ def exact_optimal_chop(simulator, time, epsilon, q_tile): #q_tile computes the q
     
     result = gbrt_minimize(func=obj_func,dimensions=dimensions, n_calls=50, n_initial_points = 20, 
                 random_state=4, verbose = False, acq_func = "LCB", x0 = guess_points, n_jobs=1)
+    
+    opt_nb, opt_w = result.x
+    opt_w = float(opt_w) #because int64 return type is not json serializable
+    opt_nb = int(opt_nb)
 
-    simulator.gate_count = result.fun
+    simulator.gate_count = (int(result.fun), [opt_nb, opt_w])
     #print("result.fun: ", result.fun)
     #print("result.x: ", result.x)
 
@@ -947,7 +953,7 @@ def optimal_local_chop(simulator, time, epsilon): ### needs exact cost function 
         local_partition(simulator, partition = "chop", weights=weights, time=time, epsilon=epsilon)
         return exact_cost(simulator, time, nb_list, epsilon)
     
-    result = gbrt_minimize(func=obj_func,dimensions=dimensions, n_calls=40, n_initial_points = 5, 
+    result = gbrt_minimize(func=obj_func,dimensions=dimensions, n_calls=50, n_initial_points = 15, 
                 random_state=4, verbose = False, acq_func = "LCB", x0 = guess_points, n_jobs=1)
     simulator.gate_count = result.fun
     print("(nba, nby, nbb, wa, wy, wb): " +str(result.x))

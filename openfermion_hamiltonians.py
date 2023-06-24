@@ -96,3 +96,30 @@ def hydrogen_chain_hamiltonian(chain_length, bond_length):
     #print(hydrogen_hamiltonian_list.shape)
     #print(hydrogen_hamiltonian_list)
     return hydrogen_hamiltonian_list
+
+def LiH_hamiltonian():
+    basis = 'sto-3g'
+    multiplicity = 1
+    # Set Hamiltonian parameters.
+    active_space_start = 1
+    active_space_stop = 3
+    LiH_geometry = geometry_from_pubchem('LiH')
+    #print(LiH_geometry)
+    #diatomic_bond_length = 1.45
+    #LiH_geometry = [('Li', (0., 0., 0.)), ('H', (0., 0., diatomic_bond_length))]
+    #print(LiH_geometry)
+
+    # Generate and populate instance of MolecularData.
+    LiH_molecule = MolecularData(LiH_geometry, basis, multiplicity, description="1.45")
+    LiH_molecule.load()
+
+    # Get the Hamiltonian in an active space.
+    LiH_molecular_hamiltonian = LiH_molecule.get_molecular_hamiltonian(
+    occupied_indices=range(active_space_start),
+    active_indices=range(active_space_start, active_space_stop))
+
+    # Map operator to fermions and qubits.
+    LiH_fermion_hamiltonian = get_fermion_operator(LiH_molecular_hamiltonian)
+    LiH_qubit_hamiltonian = jordan_wigner(LiH_fermion_hamiltonian)
+    LiH_hamiltonian_list = openfermion_matrix_list(LiH_qubit_hamiltonian)
+    return LiH_hamiltonian_list

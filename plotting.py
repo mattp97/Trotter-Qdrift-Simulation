@@ -19,14 +19,17 @@ def crossover_advantage(qd_data, trot_data, comp_data, times):
         x_intercept.append(x1)
     y_intercept = np.linspace(0, 50000, len(times))
     
-    line_3 = LineString(np.column_stack(times, comp_data))
-    line_4 = LineString(np.column_stack(x_intercept, y_intercept))
+    line_3 = LineString(np.column_stack((times, comp_data)))
+    line_4 = LineString(np.column_stack((x_intercept, y_intercept)))
 
     intersection2 = line_3.intersection(line_4)
     x2, y2 = intersection2.xy
     plt.plot(*intersection2.xy, 'ro')
 
-    comp_adv = y1/y2
+    print(y1)
+    print(y2)
+
+    comp_adv = float(y1[0])  /  float(y2[0])
     return comp_adv
 
 #plots the distribution of norms in the hamiltonian
