@@ -487,16 +487,19 @@ def expected_cost(simulator, partition_probs, time, infidelity_threshold, heuris
     print("[expected_cost] cost avg and std:", np.mean(costs), " +- (", np.std(costs), ")")
     return np.mean(costs)
 
-# Computes and sets a partition
-# Inputs:
-# - simulator: A composite simulator, not type checked for flexibility later on
-# - partition_type: A string describing what partition method to use.
-# - weight_threshold: for "chop" partition, determines the spectral norm cutoff for each term to end up in QDrift
-# - optimize: for some partitions?
-# - nb_scaling: a parametrization of nb within it's lower bound. Follows the scaling (1 + c)^2 * lower_bound. see paper for lower_bound
-# - time: required for probabilistic
-# - epsilon: required for probabilistic
+
 def partition_sim(simulator, partition_type = "prob", chop_threshold = 0.5, optimize = False, nb_scaling = 0.0, time=0.01, epsilon=0.05, q_tile = 85):
+    """
+Computes and sets a partition
+Inputs:
+- simulator: A composite simulator, not type checked for flexibility later on
+- partition_type: A string describing what partition method to use.
+- weight_threshold: for "chop" partition, determines the spectral norm cutoff for each term to end up in QDrift
+- optimize: for some partitions?
+- nb_scaling: a parametrization of nb within it's lower bound. Follows the scaling (1 + c)^2 * lower_bound. see paper for lower_bound
+- time: required for probabilistic
+- epsilon: required for probabilistic
+    """
     if type(partition_type) != type("string"):
         print("[partition_sim] We only accept strings to describe the partition_type")
         return 1

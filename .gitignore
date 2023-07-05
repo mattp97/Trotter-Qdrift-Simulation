@@ -8,3 +8,4 @@ __pycache__/
 *.hdf5
 *.pickle
 testing/*
+.VSCodeCounter/**
