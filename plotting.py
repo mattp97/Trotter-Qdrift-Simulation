@@ -33,7 +33,7 @@ def crossover_advantage(qd_data, trot_data, comp_data, times):
     return comp_adv
 
 #plots the distribution of norms in the hamiltonian
-def ham_spec(hamiltonian_list):
+def ham_spec(hamiltonian_list, q = 75, y_line=1):
     norms = []
     index = []
     zero_norms = 0
@@ -45,10 +45,22 @@ def ham_spec(hamiltonian_list):
         if spec == 0:
             zero_norms += 1
     norms.sort()
+    q_tile = np.percentile(norms, q)
+    q_tile_loc = norms.index(q_tile)
+
+    print('q-tile is ' + str(q_tile) + ' and occurs at term '+ str(q_tile_loc))
+    print(str(len(norms)) + ' total terms in H')
+
+    trot_pot = len([i for i in norms if (i >= q_tile)])
+    print(str(trot_pot) + ' potential terms in trotter, which is ' + str(trot_pot/ len(norms) * 100) + '% of the total terms')
+
+    plt.rcParams['text.usetex'] = True
     plt.figure(figsize=(9,7))
-    plt.semilogy(index, norms, 'o-')
-    plt.xlabel("Index", size = 18)
-    plt.ylabel("Spectral Norm", size = 18)
+    plt.semilogy(index, norms, 'bs-')
+    plt.axvline(x = q_tile_loc, color = 'r', label = str(q_tile_loc) + ' Percentile')
+    plt.axhline(y = y_line, color = 'r', label = str(q_tile_loc) + ' Percentile')
+    plt.xlabel(r"$j$", size = 18)
+    plt.ylabel(r"$\left| \left| H_j \right| \right|$", size = 18)
     plt.show()
     print("There are " + str(zero_norms) + " terms with 0 spectral norm")
     return norms

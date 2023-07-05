@@ -9,15 +9,15 @@ from itertools import product
 
 if __name__ == "__main__":
     cluster = False
-    job_name = 'final_h2real_'
+    job_name = 'LiH_'
     n_proc = 12
     imag_flag = False
 
     #hamiltonian = exp_loc_graph_hamiltonian(7, 1, 1)
     #hamiltonian = exp_distr_heisenberg_hamiltonian(length = 7, b_field = 5, rng_seed=1, b_rand=False)
     #hamiltonian = jellium_hamiltonian(dimensions=1, length=4, spinless=True)
-    hamiltonian = hydrogen_chain_hamiltonian(chain_length=2, bond_length=0.8)
-    #hamiltonian = LiH_hamiltonian()
+    #hamiltonian = hydrogen_chain_hamiltonian(chain_length=2, bond_length=0.8)
+    hamiltonian = LiH_hamiltonian()
     hamiltonian = normalize_hamiltonian(hamiltonian)
     norm = np.linalg.norm(np.sum(hamiltonian, axis=0), ord=2)
 
@@ -50,6 +50,7 @@ if __name__ == "__main__":
     data = {}
     data["time"] = times
     data["ham_dims"] = hamiltonian.shape
+    print(hamiltonian.shape)
     data["is_time_imaginary"] = imag_flag
     data["qdtime"] = qd_times
     data["norm"] = norm
