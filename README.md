@@ -34,7 +34,7 @@ epsilon = sim_trace_distance(comp_sim, time=0.5, iterations=5, nb=20)
 cost = exact_cost(simulator=comp_sim, time=0.5, nb=20, epsilon=0.001)
 ```
 
-If we wish to optimize simulation parameters, choosing the partition `exact_optimal_chop` will automatically find the optimal gate count in calculating the best partitions and N_B values. THis gate count can then be accessed through the method `comp_sim.gate_count`. 
+If we wish to optimize simulation parameters, choosing the partition `exact_optimal_chop` will automatically find the optimal gate count in calculating the best partitions and N_B values. This gate count can then be accessed through the method `comp_sim.gate_count`. 
 
 ## Data Collection
 
