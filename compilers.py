@@ -79,16 +79,19 @@ def compute_trotter_timesteps(numTerms, simTime, trotterOrder = 1):
     else:
         raise Exception("[compute_trotter_timesteps] trotterOrder seems to be bad")
 
-# A basic trotter simulator organizer.
-# Inputs
-# - hamiltonian_list: List of terms that compose your overall hamiltonian. Data type of each entry
-#                     in the list is numpy matrix (preferably sparse, no guarantee on data struct
-#                     actually used). Ex: H = A + B + C + D --> hamiltonian_list = [A, B, C, D]
-#                     ASSUME SQUARE MATRIX INPUTS
-# - iterations: "r" parameter. This object will handle repeating the channel r times and dividing 
-#               overall simulation into t/r chunks.
-# - order: The trotter order, represented as "2k" in literature. 
+
 class TrotterSim:
+    """
+    A basic trotter simulator organizer.
+Inputs
+- hamiltonian_list: List of terms that compose your overall hamiltonian. Data type of each entry
+                    in the list is numpy matrix (preferably sparse, no guarantee on data struct
+                    actually used). Ex: H = A + B + C + D --> hamiltonian_list = [A, B, C, D]
+                    ASSUME SQUARE MATRIX INPUTS
+- iterations: "r" parameter. This object will handle repeating the channel r times and dividing 
+              overall simulation into t/r chunks.
+- order: The trotter order, represented as "2k" in literature. 
+    """
     def __init__(self, hamiltonian_list = [], order = 1, use_density_matrices = False, imag_time = False):
         self.hamiltonian_list = []
         self.spectral_norms = []
@@ -616,10 +619,12 @@ class CompositeSim:
     def set_exact_qd(self, val):
         self.qdrift_sim.exact_qd = val
     
-    # Inputs: trotter_list - a python list of numpy arrays, each element is a single term in a hamiltonian
-    #         qdrift_list - same but these terms go into the qdrift simulator. 
-    # Note: each of these matrices should NOT be normalized, all normalization should be done internally
     def set_partition(self, trotter_list, qdrift_list):
+        """
+        Do not manually use. Used in conjuction with `partition_sim` to split a 
+        simulator up into trotter and qdrift parts. This assumes that `trotter_list` and `qdrift_list` can be concatenated to give the original hamiltonian list, as we do not check that the Hamiltonian is
+        unchanged. It also assumes that the matrices are not normalized as this is done within the function itself.
+        """
         self.gate_count = 0
         self.trotter_sim.gate_count = 0
         self.qdrift_sim.gate_count = 0
@@ -649,7 +654,7 @@ class CompositeSim:
             self.trotter_sim.set_hamiltonian(norm_list=self.trotter_norms, mat_list=self.trotter_operators)
         elif len(trotter_list) == 0:
             self.trotter_sim.clear_hamiltonian()
-        
+    
         return 0
 
     def print_partition(self):
