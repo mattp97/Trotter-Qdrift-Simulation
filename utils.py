@@ -95,6 +95,9 @@ def infidelity(rho, sigma):
         print("[infidelity] Could not parse shapes:", rho.shape, sigma.shape)
 
 def exact_time_evolution_density(hamiltonian_list, time, initial_rho):
+    '''
+    Computes the exact time evolution of a density matrix given a Hamiltonian in real time.
+    '''
     if len(hamiltonian_list) == 0:
         print("[exact_time_evolution] pls give me hamiltonian")
         return 1
@@ -178,7 +181,11 @@ def multi_trace_distance_sample(simulator, time, exact_final_state, iterations=1
         ret = (dist, simulator.gate_count)
     return ret
 
-def exact_time_evolution(sim, time): #framework did not accept a simulator previously, this may break something somewhere in the state_vec sampling pic
+def exact_time_evolution(sim, time): 
+    '''
+    Given a simulator, compute the exact time evolution of the Hamiltonian (no channel approximation algorithms) in real or imaginary time depending on `imag_time` attribute.
+    '''
+    #framework did not accept a simulator previously, this may break something somewhere in the state_vec sampling pic
     if sim.use_density_matrices == True:
         if sim.imag_time == False:
             return linalg.expm(1j * sum(sim.unparsed_hamiltonian) * time) @ sim.initial_state @ linalg.expm(1j * sum(sim.unparsed_hamiltonian) * time).conj().T
@@ -490,15 +497,23 @@ def expected_cost(simulator, partition_probs, time, infidelity_threshold, heuris
 
 def partition_sim(simulator, partition_type = "prob", chop_threshold = 0.5, optimize = False, nb_scaling = 0.0, time=0.01, epsilon=0.05, q_tile = 85):
     """
+# Partitioning
 Computes and sets a partition
-Inputs:
+## Partition schemes
+### Possible strings and their function:
+- "chop" - chop partition given a `chop_threshold`
+- "exact_optimal_chop" - returns an optimal (upon convergence) partition given a `time`, `epsilon`, and `qtile`. See `readme.md` for more info.
+- "prob" - computes the partition in lemma 2.1 given in "Composite Quantum Simulations" by Hagan and Wiebe.
+- "random" - random partition
+## Parameters
 - simulator: A composite simulator, not type checked for flexibility later on
 - partition_type: A string describing what partition method to use.
-- weight_threshold: for "chop" partition, determines the spectral norm cutoff for each term to end up in QDrift
-- optimize: for some partitions?
+- chop_threshold: for "chop" partition, determines the spectral norm cutoff for each term to end up in QDrift
+- optimize: artefact of an earlier Nelder-Mead partitioning method. Deprecated: leave false
 - nb_scaling: a parametrization of nb within it's lower bound. Follows the scaling (1 + c)^2 * lower_bound. see paper for lower_bound
 - time: required for probabilistic
 - epsilon: required for probabilistic
+- q_tile: calculates the inputed percentile of the spectral norm distribution to upper bound search space for "exact_optimal_chop". See readme.md for more info
     """
     if type(partition_type) != type("string"):
         print("[partition_sim] We only accept strings to describe the partition_type")
@@ -963,6 +978,10 @@ def optimal_local_chop(simulator, time, epsilon): ### needs exact cost function 
     return 0
 
 def exact_cost(simulator, time, nb, epsilon): #relies on the use of density matrices
+    '''
+    Solves the search problem for the exact number of iterations of a given composite channel to achieve an error epsilon. 
+    Requires monotonicity of the trace distance w.r.t iterations, so density matrices are required
+    '''
     simulator.gate_count = 0
     if type(simulator.partition_type) == type(None): raise TypeError("call a partition function before calling this function")
     if type(simulator) == (CompositeSim): 
@@ -1026,6 +1045,9 @@ def exact_cost(simulator, time, nb, epsilon): #relies on the use of density matr
     return simulator.gate_count
 
 def sim_trace_distance(simulator, time, iterations, nb = None): 
+    '''
+    Returns the trace distance for a simulation given a simulator and other parameters. Allows one to redefine nb, even if already defined in the simulator object.
+    '''
     #this fucntion has redundancy with the handelling of nb with respect to exact cost
     if type(simulator) == CompositeSim:
         if type(nb) == type(None): raise TypeError("required to set an nb")
@@ -1054,6 +1076,9 @@ def set_local_nb(simulator, nb_list): #is chop using this
         simulator.internal_sims[i].nb = nb_list[i]
 
 def normalize_hamiltonian(hamiltonian_list):
+    '''
+    Given a Hamiltonian as a 3d numpy array, normalizes each Hamiltonian term by the largest spectral norm.
+    '''
     temp_norms = []
     norm_hamiltonian_list = []
     for k in hamiltonian_list:
@@ -1065,6 +1090,9 @@ def normalize_hamiltonian(hamiltonian_list):
 
 # Imaginary time evolution -- this sectiuon is used for tools to help with imaginary time QDrift for Monte-Carlo
 def exact_imaginary_channel(hamiltonian_list, i_time, initial_rho):
+    '''
+    Computes the exact time evolution of a density matrix given a Hamiltonian in imaginary time.
+    '''
     evol_op = linalg.expm(-1 * i_time * sum(hamiltonian_list))
     ret = evol_op @ initial_rho @ evol_op
     return ret / np.trace(ret)
